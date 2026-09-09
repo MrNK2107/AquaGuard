@@ -1,0 +1,6 @@
+path: C:/Users/nanda/Desktop/RAP/data/yolo
+train: images/train
+val: images/val
+test: images/test
+nc: 6
+names: ['can_metal', 'bottle_plastic', 'bottle_glass', 'net_plastic', 'bag_plastic', 'tire_rubber']
