@@ -1,0 +1,84 @@
+# ==============================================================================
+# Git Ignore Configuration for AquaGuard (SeaClear RT-DETR)
+# ==============================================================================
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Gradio Cache
+.gradio/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / Packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyTorch / Ultralytics / Caches
+*.cache
+*.pt.tmp
+rtdetr-l.pt
+
+# Large Raw Archives & Datasets
+archive.zip
+data/raw_hf_yolo/
+data/images/
+data/labels/
+data/yolo/images/
+data/yolo/labels/
+
+# Log files
+*.log
+bg_out.log
+bg_err.log
+runs_train*.log
+
+# Training Checkpoints & Intermediate Runs
+runs/
+
+
+# Testing & Coverage
+.pytest_cache/
+.benchmarks/
+.coverage
+.coverage.*
+htmlcov/
+nosetests.xml
+coverage.xml
+
+# Jupyter Notebook Checkpoints & temporary dumps
+.ipynb_checkpoints/
+
+# IDE & Editor Specific Files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Documents & PDFs
+*.pdf
