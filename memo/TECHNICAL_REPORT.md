@@ -1,5 +1,5 @@
 # 🌊 AquaGuard: SeaClear RT-DETR
-## Technical Implementation, System Audit & Failure Mode Memo
+## Technical Implementation, System Audit & Failure Mode Report
 
 **Candidate / Track**: Computer Vision + Applied ML Engineering (Take-Home Round 1)  
 **Target Domain**: Underwater Anthropogenic Marine Debris Detection for Autonomous Benthic Cleanup  

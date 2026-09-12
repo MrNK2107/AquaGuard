@@ -4,7 +4,7 @@
 ### Real-Time Underwater Marine Debris Detection & Reasoning API
 
 [![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Live%20Demo-yellow?style=for-the-badge&logo=huggingface&logoColor=white)](https://huggingface.co/spaces/MrPhantom07/aquaguard)
-[![Technical Memo](https://img.shields.io/badge/%F0%9F%93%9D%20Technical%20Audit-WRITTEN__MEMO.md-purple?style=for-the-badge)](memo/WRITTEN_MEMO.md)
+[![Technical Report](https://img.shields.io/badge/%F0%9F%93%9D%20Technical%20Report-TECHNICAL__REPORT.md-purple?style=for-the-badge)](memo/TECHNICAL_REPORT.md)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![PyTorch 2.1+](https://img.shields.io/badge/PyTorch-2.1%2B-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -42,7 +42,7 @@
 | :--- | :--- | :---: |
 | 🚀 **Live ZeroGPU Space** | Interactive Gradio Web Demo on Hugging Face | [**Open Live App**](https://huggingface.co/spaces/MrPhantom07/aquaguard) |
 | 🌐 **Fullscreen App** | Direct standalone web application interface | [**Open Fullscreen**](https://mrphantom07-aquaguard.hf.space) |
-| 📑 **Technical Audit Memo** | 2-Page report with 5 failure cases & root-cause analyses | [**`memo/WRITTEN_MEMO.md`**](memo/WRITTEN_MEMO.md) |
+| 📑 **Technical Report** | Comprehensive system audit with 5 failure cases & root-cause analyses | [**`memo/TECHNICAL_REPORT.md`**](memo/TECHNICAL_REPORT.md) |
 | 🔌 **API Usage Guide** | Endpoints, payload schemas, and Python/cURL examples | [**`API_USAGE.md`**](API_USAGE.md) |
 | 📦 **Trained Checkpoint** | Production fine-tuned RT-DETR-L weights (`92.32%` mAP50)| [**`weights/best.pt`**](weights/best.pt) |
 
@@ -220,7 +220,7 @@ For comprehensive payload schemas, `curl` requests, and Python SDK code samples,
 ├── eval_results/
 │   └── audit_metrics.json       # JSON export of 15% holdout test evaluation scores
 ├── memo/
-│   └── WRITTEN_MEMO.md          # Publication-grade technical audit & failure mode memo
+│   └── TECHNICAL_REPORT.md      # Publication-grade technical audit & failure mode report
 ├── runs/detect/train-2/         # Training logs, checkpoints, PR curves, and confusion matrices
 ├── scripts/
 │   ├── prepare_data.py          # Two-stage stratified dataset preparation pipeline
@@ -237,9 +237,9 @@ For comprehensive payload schemas, `curl` requests, and Python SDK code samples,
 
 ---
 
-## 📑 Comprehensive Technical Memo & System Audit
+## 📑 Comprehensive Technical Report & System Audit
 
-A publication-grade **System Audit, Dataset Analysis & Failure Mode Report** is documented in **[`memo/WRITTEN_MEMO.md`](memo/WRITTEN_MEMO.md)**, containing:
+A publication-grade **System Audit, Dataset Analysis & Failure Mode Report** is documented in **[`memo/TECHNICAL_REPORT.md`](memo/TECHNICAL_REPORT.md)**, containing:
 1. **System Architecture & Dataflow**: Mermaid pipeline linking client, intent routing, neural detector, and spatial guardrails.
 2. **Dataset Annotation & Spatial Heatmaps**: Bounding box spatial density and multi-class distribution plots.
 3. **Training & Metric Progression Curves**: 30-epoch loss convergence, PR curves, and normalized confusion matrices.
