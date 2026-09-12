@@ -1,0 +1,50 @@
+# ==============================================================================
+# Docker Ignore Configuration for AquaGuard API
+# ==============================================================================
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
+# Git & IDEs
+.git/
+.gitignore
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python / Bytecode Caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.benchmarks/
+.coverage*
+htmlcov/
+.gradio/
+.ipynb_checkpoints/
+
+# Raw Datasets & Large Archives
+archive.zip
+data/raw_hf_yolo/
+data/images/
+data/labels/
+data/yolo/images/
+data/yolo/labels/
+
+# Logs & Training Runs
+*.log
+runs/
+bg_out.log
+bg_err.log
+runs_train*.log
+
+# Temp & Artifact Dumps
+*.cache
+*.pt.tmp
+rtdetr-l.pt
