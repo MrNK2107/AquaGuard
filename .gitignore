@@ -85,8 +85,10 @@ desktop.ini
 
 # Documents, PDFs & Rendered Previews
 *.pdf
+*.docx
 memo/pdf/
 memo/png/
+memo/word/
 memo/*.pdf
 memo/*_p*.png
 *.tmp
