@@ -1,15 +1,14 @@
 """
-AquaGuard: SeaClear RT-DETR Interactive Web Interface (Gradio)
-=============================================================
-Compatible with Hugging Face Spaces (Free Tier), local development, and public sharing.
-Provides interactive interfaces for:
-- Part A: RT-DETR Object Detection (bounding boxes, confidences, classes)
-- Part B: Framework-Free Natural Language Reasoning & Guardrails
-- System Metrics & Failure Mode Analysis
+AquaGuard: SeaClear RT-DETR Perception & Reasoning Studio
+==========================================================
+Inspired by clean full-width HF perception studios.
+Supports optional visual question answering & dynamic UI customization.
+Pure Python reasoning layer without external agent frameworks.
 """
 
 import os
 import time
+import json
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import gradio as gr
@@ -30,7 +29,7 @@ except Exception:
     def gpu_decorator(fn):
         return fn
 
-# Resolve model weights
+# Model Weights Resolution
 def get_weights_path():
     candidates = [
         Path("weights/best.pt"),
@@ -47,49 +46,55 @@ WEIGHTS_PATH = get_weights_path()
 print(f"Loading RT-DETR Model from: {WEIGHTS_PATH}")
 model = RTDETR(WEIGHTS_PATH)
 
-# Class color palette for clear contrast on underwater images
 CLASS_NAMES = ['can_metal', 'bottle_plastic', 'bottle_glass', 'net_plastic', 'bag_plastic', 'tire_rubber']
 CLASS_COLORS = {
-    'can_metal': (255, 87, 34),       # Bright Orange
-    'bottle_plastic': (33, 150, 243),  # Blue
-    'bottle_glass': (0, 188, 212),     # Cyan
-    'net_plastic': (255, 235, 59),     # Yellow
-    'bag_plastic': (233, 30, 99),      # Pink/Magenta
-    'tire_rubber': (76, 175, 80)       # Green
+    'can_metal': (255, 107, 0),       # Coral Orange
+    'bottle_plastic': (0, 195, 255),  # Cyan Blue
+    'bottle_glass': (46, 204, 113),   # Mint Green
+    'net_plastic': (241, 196, 15),    # Gold Yellow
+    'bag_plastic': (231, 76, 60),     # Red Coral
+    'tire_rubber': (155, 89, 182)     # Purple Violet
 }
 
 def annotate_image(image: Image.Image, detections: list) -> Image.Image:
-    """Draws styled bounding boxes and class tags on image."""
+    """Draws sleek bounding boxes with readable tags matching the legend."""
     img_draw = image.copy().convert("RGB")
     draw = ImageDraw.Draw(img_draw)
     
+    try:
+        font = ImageFont.truetype("arial.ttf", size=14)
+    except Exception:
+        font = ImageFont.load_default()
+        
     for det in detections:
         x1, y1, x2, y2 = det["x1"], det["y1"], det["x2"], det["y2"]
         cname = det["class_name"]
         conf = det["confidence"]
-        color = CLASS_COLORS.get(cname, (255, 255, 0))
+        color = CLASS_COLORS.get(cname, (0, 200, 255))
         
         # Bounding box
         draw.rectangle([x1, y1, x2, y2], outline=color, width=3)
         
-        # Label banner
-        label_text = f"{cname} {conf:.2f}"
-        # Small background for label
-        draw.rectangle([x1, max(0, y1 - 18), x1 + len(label_text) * 8 + 6, max(0, y1)], fill=color)
-        draw.text((x1 + 3, max(0, y1 - 16)), label_text, fill=(255, 255, 255))
+        # Pill banner
+        label_text = f" {cname} {conf*100:.1f}% "
+        bbox = draw.textbbox((x1, max(0, y1 - 20)), label_text, font=font)
+        draw.rectangle(bbox, fill=color)
+        draw.text((x1, max(0, y1 - 20)), label_text, fill=(10, 15, 30), font=font)
         
     return img_draw
 
+
 @gpu_decorator
-def run_detection(input_image: Image.Image, conf_threshold: float, iou_threshold: float):
-    if input_image is None:
-        return None, "Please upload an image.", []
-    
+def run_detect(image: Image.Image, conf_threshold: float):
+    if image is None:
+        return None, "", [], {}
+
     t0 = time.time()
-    results = model.predict(source=input_image, conf=conf_threshold, iou=iou_threshold, verbose=False)
+    results = model.predict(source=image, conf=conf_threshold, iou=0.45, verbose=False)
     latency_ms = (time.time() - t0) * 1000
-    
+
     detections = []
+    class_counts = {}
     for r in results:
         if r.boxes is None:
             continue
@@ -98,48 +103,79 @@ def run_detection(input_image: Image.Image, conf_threshold: float, iou_threshold
             cid = int(box.cls[0].item())
             cname = CLASS_NAMES[cid] if 0 <= cid < len(CLASS_NAMES) else str(cid)
             conf = float(box.conf[0].item())
+            
             detections.append({
                 "class_name": cname,
                 "confidence": round(conf, 3),
+                "confidence_pct": f"{conf * 100:.1f}%",
                 "x1": round(x1, 1), "y1": round(y1, 1),
-                "x2": round(x2, 1), "y2": round(y2, 1)
+                "x2": round(x2, 1), "y2": round(y2, 1),
+                "box_coords": f"[{round(x1, 1)}, {round(y1, 1)}, {round(x2, 1)}, {round(y2, 1)}]"
             })
-            
+            class_counts[cname] = class_counts.get(cname, 0) + 1
+
     detections = sorted(detections, key=lambda x: x["confidence"], reverse=True)
-    annotated = annotate_image(input_image, detections)
+    annotated = annotate_image(image, detections)
+
+    count_str = ", ".join([f"{k}: {v}" for k, v in class_counts.items()]) if class_counts else "None"
+    status_pills = f"""
+    <div class="pills">
+        <span class="pill pill-ok">🟢 {len(detections)} object(s) detected</span>
+        <span class="pill pill-info">⚡ {latency_ms:.1f} ms latency</span>
+        <span class="pill pill-muted">📦 {count_str}</span>
+    </div>
+    """
+
+    table_data = [[d["class_name"], d["confidence_pct"], d["box_coords"]] for d in detections]
     
-    summary_text = (
-        f"**Detections Found**: {len(detections)} object(s)\n\n"
-        f"**Inference Latency**: {latency_ms:.1f} ms ({'GPU' if torch.cuda.is_available() else 'CPU'})\n\n"
-        f"**Active Checkpoint**: `{Path(WEIGHTS_PATH).name}`"
-    )
-    
-    table_data = [[d["class_name"], d["confidence"], f"[{d['x1']}, {d['y1']}, {d['x2']}, {d['y2']}]"] for d in detections]
-    return annotated, summary_text, table_data
+    raw_json = {
+        "status": "success",
+        "objects_count": len(detections),
+        "latency_ms": round(latency_ms, 1),
+        "detections": detections
+    }
+
+    return annotated, status_pills, table_data, raw_json
+
 
 @gpu_decorator
-def run_reasoning(input_image: Image.Image, question: str, conf_threshold: float):
-    if not question or not question.strip():
-        return "Please enter a question.", "N/A", "N/A", False
-        
-    q = question.strip()
+def run_ask(image: Image.Image, question: str, conf_threshold: float):
+    q = question.strip() if question else ""
     
-    # 1. Intent Routing Check
-    if not needs_detector(q):
+    # 1. Non-visual inquiry bypass check
+    if q and not needs_detector(q):
         if "hello" in q.lower() or "hi" in q.lower():
-            answer = "Hello! I am AquaGuard, an autonomous marine debris detection and reasoning assistant. Upload an underwater seabed image and ask about detected litter, counts, or locations."
+            ans = "Hello! I am AquaGuard, an autonomous underwater marine debris perception & reasoning system. Ask me about detected litter, counts, spatial positions, or classifications."
         elif "what can you do" in q.lower() or "who are you" in q.lower():
-            answer = "I identify 6 classes of underwater anthropogenic debris (can_metal, bottle_plastic, bottle_glass, net_plastic, bag_plastic, tire_rubber) and perform spatial reasoning over counts and bounding boxes."
+            ans = "I detect 6 non-COCO seabed debris classes (can_metal, bottle_plastic, bottle_glass, net_plastic, bag_plastic, tire_rubber) and perform grounded spatial reasoning without external agent frameworks."
         else:
-            answer = "This question does not require visual perception. No image detection was invoked."
-        return answer, "Bypassed (0 ms, 0 GPU)", "0 objects", False
+            ans = "This query does not require visual perception. The vision detection pipeline was bypassed to conserve edge GPU compute."
+            
+        status_pills = """
+        <div class="pills">
+            <span class="pill pill-info">⚡ Bypassed Detector (0 ms, 0 GPU)</span>
+            <span class="pill pill-ok">🟢 Direct Response</span>
+        </div>
+        """
+        raw_json = {
+            "status": "success",
+            "question": q,
+            "answer": ans,
+            "used_detector": False,
+            "insufficient": False
+        }
+        return image, ans, status_pills, [], raw_json
 
-    # 2. Vision Pipeline
-    if input_image is None:
-        return "Error: Please upload an image to answer visual queries.", "N/A", "N/A", True
-        
-    results = model.predict(source=input_image, conf=0.20, verbose=False)
+    if image is None:
+        return None, "Please upload an underwater image or select a hold-out test sample.", "", [], {}
+
+    # 2. Neural Detection
+    t0 = time.time()
+    results = model.predict(source=image, conf=conf_threshold, iou=0.45, verbose=False)
+    latency_ms = (time.time() - t0) * 1000
+
     detections = []
+    class_counts = {}
     for r in results:
         if r.boxes is None:
             continue
@@ -148,141 +184,456 @@ def run_reasoning(input_image: Image.Image, question: str, conf_threshold: float
             cid = int(box.cls[0].item())
             cname = CLASS_NAMES[cid] if 0 <= cid < len(CLASS_NAMES) else str(cid)
             conf = float(box.conf[0].item())
+            
             detections.append({
                 "class_name": cname,
-                "confidence": conf,
-                "x1": x1, "y1": y1, "x2": x2, "y2": y2
+                "confidence": round(conf, 3),
+                "confidence_pct": f"{conf * 100:.1f}%",
+                "x1": round(x1, 1), "y1": round(y1, 1),
+                "x2": round(x2, 1), "y2": round(y2, 1),
+                "box_coords": f"[{round(x1, 1)}, {round(y1, 1)}, {round(x2, 1)}, {round(y2, 1)}]"
             })
-            
-    # 3. Decision Reasoning & Guardrail Evaluation
-    answer, insufficient = answer_from_detections(q, detections, conf_thresh=conf_threshold)
-    intent_status = "Visual Reasoning Invoked" if not is_unanswerable_query(q) else "Unanswerable / Non-visual Query Filtered"
-    
-    return answer, intent_status, f"{len(detections)} candidate object(s)", insufficient
+            class_counts[cname] = class_counts.get(cname, 0) + 1
 
-# Find sample images if available
+    detections = sorted(detections, key=lambda x: x["confidence"], reverse=True)
+    annotated = annotate_image(image, detections)
+
+    # 3. Grounded Reasoning
+    if q:
+        answer, insufficient = answer_from_detections(q, detections, conf_thresh=conf_threshold)
+    else:
+        if detections:
+            tally_str = ", ".join([f"{k}: {v}" for k, v in class_counts.items()])
+            answer = f"Detected {len(detections)} debris item(s) on the seabed ({tally_str}). Ask any question to perform spatial reasoning over counts, locations, or debris types."
+        else:
+            answer = "No debris objects detected at the current confidence threshold."
+        insufficient = False
+
+    if insufficient:
+        guard_pill = '<span class="pill pill-warn">🛡️ Guardrail Refusal (Insufficient Info)</span>'
+    else:
+        guard_pill = '<span class="pill pill-ok">🟢 Grounded Reasoning OK</span>'
+
+    status_pills = f"""
+    <div class="pills">
+        {guard_pill}
+        <span class="pill pill-info">⚡ {latency_ms:.1f} ms</span>
+        <span class="pill pill-muted">🎯 {len(detections)} objects</span>
+    </div>
+    """
+
+    table_data = [[d["class_name"], d["confidence_pct"], d["box_coords"]] for d in detections]
+
+    raw_json = {
+        "status": "success",
+        "question": q if q else None,
+        "answer": answer,
+        "objects_count": len(detections),
+        "latency_ms": round(latency_ms, 1),
+        "insufficient": insufficient,
+        "detections": detections
+    }
+
+    return annotated, answer, status_pills, table_data, raw_json
+
+
+def toggle_qa_visibility(enabled: bool):
+    """Dynamically shows or hides the Question & Answer controls."""
+    return gr.update(visible=enabled), gr.update(visible=enabled)
+
+
+# Curated clear sample test images covering all 6 non-COCO marine classes
 sample_images = []
-sample_dir = Path("data/yolo/images/test")
-if sample_dir.exists():
-    for f in list(sample_dir.glob("*.jpg"))[:4]:
-        sample_images.append(str(f))
+for p in [
+    "data/yolo/images/test/110.jpg",
+    "data/yolo/images/test/1876.jpg",
+    "data/yolo/images/test/431.jpg",
+    "data/yolo/images/test/1946.jpg",
+    "data/yolo/images/test/1360.jpg",
+    "data/yolo/images/test/Cam1_16_26_03_10_11_2020.mp4_00248.jpg"
+]:
+    if Path(p).exists():
+        sample_images.append(p)
 
-# Custom Theme Styling
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CUSTOM CSS & STYLING (Inspiration from HF PPE RT-DETR space)
+# ══════════════════════════════════════════════════════════════════════════════
+
+CUSTOM_CSS = """
+:root {
+    --bg-dark: #090e17;
+    --card-dark: #111827;
+    --border-dark: #1f293d;
+    --text-main: #f3f4f6;
+    --text-muted: #9ca3af;
+    --accent-orange: #ff6b00;
+    --accent-cyan: #00c3ff;
+}
+
+body, .gradio-container {
+    background-color: var(--bg-dark) !important;
+    color: var(--text-main) !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    max-width: 96% !important;
+    width: 96% !important;
+    margin: 0 auto !important;
+    padding: 18px 0 32px !important;
+}
+
+/* Header typography */
+.hero {
+    padding: 6px 0 16px;
+}
+.hero h1 {
+    font-size: 1.85rem;
+    font-weight: 700;
+    margin: 0 0 6px;
+    letter-spacing: -0.02em;
+    color: #ffffff;
+}
+.hero p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    line-height: 1.55;
+}
+.hero p b {
+    color: #ffffff;
+}
+.hero a {
+    color: var(--accent-orange);
+    text-decoration: none;
+    font-weight: 600;
+}
+.hero a:hover {
+    text-decoration: underline;
+}
+
+/* Orange/Coral Label Badges */
+.gr-form, .block {
+    background: transparent !important;
+    border: none !important;
+}
+
+label span, .label-wrap span {
+    font-weight: 600 !important;
+    font-size: 0.88rem !important;
+}
+
+/* Category Legend */
+.legend {
+    font-size: 0.85rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: center;
+    padding: 8px 2px 8px;
+    color: #d1d5db;
+}
+.legend span {
+    display: inline-flex;
+    align-items: center;
+}
+.sw {
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    border-radius: 3px;
+    margin-right: 6px;
+}
+.sw-can { background: #ff6b00; }
+.sw-bplastic { background: #00c3ff; }
+.sw-bglass { background: #2ecc71; }
+.sw-net { background: #f1c40f; }
+.sw-bag { background: #e74c3c; }
+.sw-tire { background: #9b59b6; }
+
+/* Status Pills */
+.pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 6px 0;
+}
+.pill {
+    display: inline-block;
+    padding: 4px 11px;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    line-height: 1.4;
+    border: 1px solid transparent;
+}
+.pill-ok {
+    background: #123322;
+    color: #7ddba3;
+    border-color: #1f5236;
+}
+.pill-warn {
+    background: #3a2f10;
+    color: #f2cd6a;
+    border-color: #5c4a1a;
+}
+.pill-info {
+    background: #16263d;
+    color: #8fb8ee;
+    border-color: #234270;
+}
+.pill-muted {
+    background: #1e293b;
+    color: #94a3b8;
+    border-color: #334155;
+}
+
+/* Answer box styling */
+#answer textarea {
+    font-size: 1.02rem !important;
+    line-height: 1.55 !important;
+    background: #111827 !important;
+    border: 1px solid #1f293d !important;
+    color: #f9fafb !important;
+    border-radius: 8px !important;
+}
+
+/* Primary and Secondary buttons */
+button.primary-btn {
+    background: #ff6b00 !important;
+    color: #ffffff !important;
+    font-weight: 700 !important;
+    border: none !important;
+    border-radius: 8px !important;
+}
+button.secondary-btn {
+    background: #1f2937 !important;
+    color: #e5e7eb !important;
+    font-weight: 600 !important;
+    border: 1px solid #374151 !important;
+    border-radius: 8px !important;
+}
+
+.toggle-wrap {
+    margin: 8px 0 4px;
+    padding: 4px 0;
+}
+
+/* Footer */
+.foot {
+    opacity: 0.7;
+    font-size: 0.85rem;
+    text-align: center;
+    padding-top: 18px;
+    margin-top: 20px;
+    border-top: 1px solid #1f293d;
+    color: #9ca3af;
+}
+
+footer {
+    display: none !important;
+}
+"""
+
 theme = gr.themes.Soft(
-    primary_hue="cyan",
-    secondary_hue="blue",
-    neutral_hue="slate"
+    primary_hue="orange",
+    secondary_hue="slate",
+    neutral_hue="slate",
+    text_size="sm",
+).set(
+    body_background_fill="#090e17",
+    body_background_fill_dark="#090e17",
+    block_background_fill="#101725",
+    block_background_fill_dark="#101725",
+    block_border_color="#1e293b",
+    block_border_color_dark="#1e293b",
+    input_background_fill="#0c1322",
+    input_background_fill_dark="#0c1322",
+    input_border_color="#1e293b",
+    input_border_color_dark="#1e293b",
 )
 
-with gr.Blocks(title="AquaGuard: SeaClear RT-DETR") as demo:
-    gr.Markdown(
+# ─────────────────────────────────────────────────────────────────────────────
+# UI LAYOUT
+# ─────────────────────────────────────────────────────────────────────────────
+
+with gr.Blocks(
+    title="AquaGuard · Marine Debris Perception & Reasoning",
+    analytics_enabled=False,
+) as demo:
+
+    gr.HTML(
         """
-        # 🌊 AquaGuard: SeaClear RT-DETR
-        ### Underwater Anthropogenic Marine Debris Detection & Reasoning System
-        *Fine-tuned **RT-DETR-L** (92.32% mAP@50) + Pure Python Framework-Free Reasoning Engine*
+        <div class="hero">
+            <h1>Underwater Debris Perception & Reasoning</h1>
+            <p>
+                RT-DETR fine-tuned for <b>can_metal</b>, <b>bottle_plastic</b>, <b>bottle_glass</b>, <b>net_plastic</b>, <b>bag_plastic</b>, and <b>tire_rubber</b> on seabed imagery, with a hand-written reasoning layer that answers questions from the detections and <b>refuses when they cannot support an answer</b>.
+                &nbsp;·&nbsp; <a href="/docs" target="_blank">API docs</a>
+                &nbsp;·&nbsp; <a href="memo/AquaGuard_Technical_Memo_and_Audit.pdf" target="_blank">memo</a>
+            </p>
+        </div>
         """
     )
-    
-    with gr.Tabs():
-        # TAB 1: OBJECT DETECTION
-        with gr.TabItem("🔍 Part A: Object Detection"):
-            with gr.Row():
-                with gr.Column(scale=1):
-                    det_input_img = gr.Image(type="pil", label="Underwater Seabed Image")
-                    det_conf_slider = gr.Slider(minimum=0.10, maximum=0.90, value=0.35, step=0.05, label="Confidence Threshold")
-                    det_iou_slider = gr.Slider(minimum=0.10, maximum=0.90, value=0.45, step=0.05, label="NMS IoU Threshold")
-                    det_btn = gr.Button("Detect Debris", variant="primary")
-                    
-                    if sample_images:
-                        gr.Examples(examples=sample_images, inputs=det_input_img, label="Sample SeaClear ROV Test Images")
-                        
-                with gr.Column(scale=1):
-                    det_output_img = gr.Image(type="pil", label="Annotated Bounding Boxes")
-                    det_summary_md = gr.Markdown(label="Detection Summary")
-                    det_table = gr.Dataframe(
-                        headers=["Class", "Confidence", "Bounding Box [x1, y1, x2, y2]"],
-                        label="Structured Detections Table"
-                    )
-                    
-            det_btn.click(
-                fn=run_detection,
-                inputs=[det_input_img, det_conf_slider, det_iou_slider],
-                outputs=[det_output_img, det_summary_md, det_table]
+
+    with gr.Row(equal_height=False):
+        # ───────────────── LEFT COLUMN: INPUTS ─────────────────
+        with gr.Column(scale=5, min_width=340):
+            input_image = gr.Image(
+                label="Seabed image",
+                sources=["upload", "webcam", "clipboard"],
+                type="pil",
+                height=360,
             )
 
-        # TAB 2: VISUAL REASONING & GUARDRAILS
-        with gr.TabItem("🧠 Part B: Reasoning & Guardrails"):
-            with gr.Row():
-                with gr.Column(scale=1):
-                    reas_input_img = gr.Image(type="pil", label="Input Image")
-                    reas_question = gr.Textbox(
-                        lines=2,
-                        placeholder="e.g. How many plastic bottles are in this image? OR What is the water depth?",
-                        label="Natural Language Question"
-                    )
-                    reas_conf_slider = gr.Slider(minimum=0.10, maximum=0.80, value=0.35, step=0.05, label="Guardrail Confidence Threshold")
-                    reas_btn = gr.Button("Submit Question", variant="primary")
-                    
-                    gr.Markdown("#### 💡 Try Sample Prompts:")
-                    ex_btn1 = gr.Button("1. 'How many plastic bottles are in this image?'", size="sm")
-                    ex_btn2 = gr.Button("2. 'Is there a rubber tire present?'", size="sm")
-                    ex_btn3 = gr.Button("3. 'Where are the objects located?'", size="sm")
-                    ex_btn4 = gr.Button("4. 'What is the water depth and weight of this tire?' (Guardrail Test)", size="sm")
-                    ex_btn5 = gr.Button("5. 'Hello, what can you do?' (Intent Routing Bypass)", size="sm")
-                    
-                with gr.Column(scale=1):
-                    reas_answer = gr.Textbox(lines=4, label="System Answer", interactive=False)
-                    reas_intent = gr.Textbox(label="Intent Router Status", interactive=False)
-                    reas_count = gr.Textbox(label="Detected Candidates", interactive=False)
-                    reas_guardrail_flag = gr.Checkbox(label="Guardrail Triggered (Insufficient Info)", interactive=False)
-                    
-            reas_btn.click(
-                fn=run_reasoning,
-                inputs=[reas_input_img, reas_question, reas_conf_slider],
-                outputs=[reas_answer, reas_intent, reas_count, reas_guardrail_flag]
-            )
-            
-            ex_btn1.click(lambda: "How many plastic bottles are in this image?", None, reas_question)
-            ex_btn2.click(lambda: "Is there a rubber tire present?", None, reas_question)
-            ex_btn3.click(lambda: "Where are the objects located?", None, reas_question)
-            ex_btn4.click(lambda: "What is the exact water depth in meters and weight of this tire?", None, reas_question)
-            ex_btn5.click(lambda: "Hello, what can you do?", None, reas_question)
+            if sample_images:
+                gr.Examples(
+                    examples=sample_images,
+                    inputs=input_image,
+                    label="Held-out test images (never trained on)",
+                    examples_per_page=6,
+                )
 
-        # TAB 3: BENCHMARK & SYSTEM AUDIT
-        with gr.TabItem("📊 Part C: Benchmark & Audit"):
-            gr.Markdown(
+            slider_conf = gr.Slider(
+                minimum=0.05,
+                maximum=0.90,
+                value=0.25,
+                step=0.05,
+                label="Confidence threshold",
+                info="boxes below this are dropped; the guardrail floor is 0.30",
+            )
+
+            detect_btn = gr.Button(
+                "Detect objects",
+                variant="primary",
+                size="lg",
+                elem_classes=["primary-btn"],
+            )
+
+            enable_qa = gr.Checkbox(
+                label="Enable question answering & spatial reasoning",
+                value=True,
+                elem_classes=["toggle-wrap"],
+            )
+
+            # Conditional Question Input Area
+            with gr.Column(visible=True) as qa_input_group:
+                input_question = gr.Textbox(
+                    label="Ask a question about the image",
+                    placeholder="e.g. How many plastic bottles are in this image?",
+                    value="How many plastic bottles are in this image?",
+                    lines=2,
+                    max_lines=3,
+                )
+
+                try_these = gr.Examples(
+                    examples=[
+                        ["How many plastic bottles are in this image?"],
+                        ["How many debris objects are in this image?"],
+                        ["Where are the detected objects located?"],
+                        ["What is the exact water depth in meters and weight of this tire?"],
+                        ["Hello! What can you do?"],
+                    ],
+                    inputs=input_question,
+                    label="Try these",
+                    examples_per_page=5,
+                )
+
+                ask_btn = gr.Button(
+                    "Ask",
+                    variant="primary",
+                    size="lg",
+                    elem_classes=["primary-btn"],
+                )
+
+        # ───────────────── RIGHT COLUMN: OUTPUTS ─────────────────
+        with gr.Column(scale=6, min_width=340):
+            output_image = gr.Image(
+                label="Detections",
+                type="pil",
+                interactive=False,
+                height=360,
+            )
+
+            gr.HTML(
                 """
-                ### 🏆 SeaClear Benchmark Scoreboard (15% Hold-out Test Set)
-                
-                | Metric | Overall Performance |
-                | :--- | :---: |
-                | **mAP@50** | **`92.32%`** |
-                | **mAP@50-95** | **`69.62%`** |
-                | **Precision** | **`88.96%`** |
-                | **Recall** | **`87.52%`** |
-                | **Inference Latency** | **`15.7 ms`** (~64 FPS) |
-                
-                ---
-                
-                ### 📦 Per-Class Holdout Test Scores
-                
-                | Class | Instances | mAP@50 | mAP@50-95 |
-                | :--- | :---: | :---: | :---: |
-                | `bag_plastic` | 138 | **99.2%** | 78.9% |
-                | `tire_rubber` | 378 | **97.7%** | 85.4% |
-                | `bottle_plastic` | 194 | **93.5%** | 70.2% |
-                | `net_plastic` | 145 | **91.5%** | 65.2% |
-                | `can_metal` | 176 | **88.6%** | 56.5% |
-                | `bottle_glass` | 364 | **83.6%** | 63.9% |
-                
-                ---
-                
-                ### 🛡️ Architecture & Guardrails Principles
-                - **No Heavy Frameworks**: Pure standard Python logic for intent routing and spatial reasoning.
-                - **Physical Optical Nuances**: Documented red-light water attenuation, optical caustics on transparent glass, and bio-fouling degradation.
+                <div class="legend">
+                    <span><i class="sw sw-can"></i>can_metal</span>
+                    <span><i class="sw sw-bplastic"></i>bottle_plastic</span>
+                    <span><i class="sw sw-bglass"></i>bottle_glass</span>
+                    <span><i class="sw sw-net"></i>net_plastic</span>
+                    <span><i class="sw sw-bag"></i>bag_plastic</span>
+                    <span><i class="sw sw-tire"></i>tire_rubber</span>
+                </div>
                 """
             )
+
+            output_pills = gr.HTML()
+
+            # Conditional Answer Box Area
+            output_answer = gr.Textbox(
+                label="Answer",
+                lines=3,
+                max_lines=4,
+                interactive=False,
+                elem_id="answer",
+                visible=True,
+            )
+
+            with gr.Accordion("Structured evidence (detections)", open=False):
+                output_table = gr.Dataframe(
+                    headers=["Class", "Confidence", "Bounding Box [x1, y1, x2, y2]"],
+                    interactive=False,
+                )
+
+            with gr.Accordion("Raw response (same fields as the API)", open=False):
+                output_json = gr.JSON(
+                    label="",
+                )
+
+    gr.HTML(
+        """
+        <div class="foot">
+            Same model and code as <code>POST /detect</code> and <code>POST /reason</code>. Pure Python rule-based reasoning engine with zero external agent frameworks.
+        </div>
+        """
+    )
+
+    # ───────────────── Event Wiring ─────────────────
+
+    # Toggle Q&A visibility dynamically
+    enable_qa.change(
+        fn=toggle_qa_visibility,
+        inputs=[enable_qa],
+        outputs=[qa_input_group, output_answer],
+    )
+
+    # 1. Detect objects button: runs detection only
+    detect_btn.click(
+        fn=run_detect,
+        inputs=[input_image, slider_conf],
+        outputs=[output_image, output_pills, output_table, output_json],
+        show_progress="full",
+    )
+
+    # 2. Ask button / Textbox submit: runs detection + grounded question answering
+    ask_btn.click(
+        fn=run_ask,
+        inputs=[input_image, input_question, slider_conf],
+        outputs=[output_image, output_answer, output_pills, output_table, output_json],
+        show_progress="full",
+    )
+
+    input_question.submit(
+        fn=run_ask,
+        inputs=[input_image, input_question, slider_conf],
+        outputs=[output_image, output_answer, output_pills, output_table, output_json],
+        show_progress="full",
+    )
+
 
 if __name__ == "__main__":
-    # Launch locally on port 7860
-    demo.launch(theme=theme, server_name="0.0.0.0", server_port=7860, share=False)
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=7860,
+        share=False,
+        theme=theme,
+        css=CUSTOM_CSS,
+    )
