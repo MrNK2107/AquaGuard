@@ -33,16 +33,23 @@ def deploy(space_name: str, hf_token: str = None):
     print(f"Target Space Repo: https://huggingface.co/spaces/{repo_id}")
     
     # 1. Create or verify Space repo
-    print("\n[1/3] Creating/Checking Hugging Face Space repository...")
-    create_repo(
-        repo_id=repo_id,
-        repo_type="space",
-        space_sdk="gradio",
-        private=False,
-        exist_ok=True,
-        token=token
-    )
-    print("  Space repository ready.")
+    print("\n[1/3] Checking Hugging Face Space repository...")
+    try:
+        api.repo_info(repo_id=repo_id, repo_type="space")
+        print("  Space repository already exists.")
+    except Exception:
+        try:
+            create_repo(
+                repo_id=repo_id,
+                repo_type="space",
+                space_sdk="gradio",
+                private=False,
+                exist_ok=True,
+                token=token
+            )
+            print("  Space repository created.")
+        except Exception as e:
+            print(f"  [NOTE] Proceeding with file upload to existing space: {e}")
     
     # 2. Upload main application files & test samples
     files_to_upload = [
@@ -81,13 +88,13 @@ def deploy(space_name: str, hf_token: str = None):
 title: AquaGuard SeaClear RT-DETR
 emoji: 🌊
 colorFrom: blue
-colorTo: cyan
+colorTo: indigo
 sdk: gradio
 sdk_version: 6.15.1
 app_file: app.py
 pinned: false
 license: mit
-short_description: Real-time underwater marine debris detection & reasoning with RT-DETR-L
+short_description: Underwater marine debris detection & reasoning with RT-DETR
 ---
 
 # 🌊 AquaGuard: SeaClear RT-DETR Underwater Debris Detection & Reasoning
@@ -103,7 +110,7 @@ Fine-tuned **RT-DETR-L** model (92.32% mAP@50) and framework-free Python reasoni
     )
     
     print("\n" + "=" * 60)
-    print(f"🚀 [SUCCESS] Space Deployed Successfully!")
+    print(f"[SUCCESS] Space Deployed Successfully!")
     print(f"Live URL: https://huggingface.co/spaces/{repo_id}")
     print("=" * 60)
     return True
