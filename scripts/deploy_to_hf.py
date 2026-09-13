@@ -1,7 +1,7 @@
 """
 Hugging Face Spaces Automated Deployment Script for AquaGuard RT-DETR
 ====================================================================
-Uploads model weights, Gradio UI, reasoning logic, and space configuration
+Uploads model weights, Gradio UI, reasoning logic, sample images, and space configuration
 directly to a Hugging Face Space repository.
 """
 
@@ -44,15 +44,23 @@ def deploy(space_name: str, hf_token: str = None):
     )
     print("  Space repository ready.")
     
-    # 2. Upload main application files
+    # 2. Upload main application files & test samples
     files_to_upload = [
         ("app_ui.py", "app.py"),                     # Main Gradio entrypoint
+        ("app_ui.py", "app_ui.py"),                  # UI module
         ("app/reasoning.py", "reasoning.py"),        # Framework-free reasoning engine
+        ("app/reasoning.py", "app/reasoning.py"),    # Package path fallback
         ("requirements.txt", "requirements.txt"),    # Dependencies
         ("weights/best.pt", "weights/best.pt"),      # Fine-tuned RT-DETR-L checkpoint
+        ("data/yolo/images/test/110.jpg", "data/yolo/images/test/110.jpg"),
+        ("data/yolo/images/test/1876.jpg", "data/yolo/images/test/1876.jpg"),
+        ("data/yolo/images/test/431.jpg", "data/yolo/images/test/431.jpg"),
+        ("data/yolo/images/test/1946.jpg", "data/yolo/images/test/1946.jpg"),
+        ("data/yolo/images/test/1360.jpg", "data/yolo/images/test/1360.jpg"),
+        ("data/yolo/images/test/Cam1_16_26_03_10_11_2020.mp4_00248.jpg", "data/yolo/images/test/Cam1_16_26_03_10_11_2020.mp4_00248.jpg"),
     ]
     
-    print("\n[2/3] Uploading Space application assets and model weights...")
+    print("\n[2/3] Uploading Space application assets, test samples, and model weights...")
     for local_rel, space_rel in files_to_upload:
         local_path = ROOT / local_rel
         if not local_path.exists():
@@ -107,3 +115,4 @@ if __name__ == "__main__":
         deploy(space_name, token)
     else:
         print("Usage: python scripts/deploy_to_hf.py <SPACE_NAME> [HF_TOKEN]")
+        print("Example: python scripts/deploy_to_hf.py aquaguard-rtdetr hf_xxxxxxxxxxxxxxxxxxxxxxxx")
