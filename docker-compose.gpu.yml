@@ -1,77 +1,67 @@
 # ==============================================================================
-# AquaGuard: Industrial Docker Compose Microservices Architecture
-# ==============================================================================
-# Services:
-# 1. aquaguard-api: Low-latency REST API service (Port 8000)
-# 2. aquaguard-studio: Cyber-Marine Interactive UI & Telemetry Dashboard (Port 7860)
+# AquaGuard: GPU-Accelerated Docker Compose (NVIDIA Container Toolkit)
 # ==============================================================================
 
 version: '3.8'
 
 services:
-  # Primary High-Throughput REST API Service
-  aquaguard-api:
+  aquaguard-api-gpu:
     build:
       context: .
-      dockerfile: Dockerfile
-      target: runtime
-    container_name: aquaguard-api
+      dockerfile: Dockerfile.gpu
+    container_name: aquaguard-api-gpu
     restart: unless-stopped
     ports:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
       - PORT=8000
-      - APP_ENV=production
-      - LOG_LEVEL=INFO
+      - NVIDIA_VISIBLE_DEVICES=all
     volumes:
       - ./weights:/app/weights:ro
       - ./logs:/app/logs:rw
     deploy:
       resources:
-        limits:
-          cpus: '4.0'
-          memory: 4G
         reservations:
-          cpus: '1.0'
-          memory: 1G
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
       interval: 20s
       timeout: 5s
       retries: 3
-      start_period: 15s
-    security_opt:
-      - no-new-privileges:true
+      start_period: 20s
     networks:
       - aquaguard-net
 
-  # Interactive Cyber-Marine Web Studio & Operator Dashboard
-  aquaguard-studio:
+  aquaguard-studio-gpu:
     build:
       context: .
-      dockerfile: Dockerfile
-      target: runtime
-    container_name: aquaguard-studio
+      dockerfile: Dockerfile.gpu
+    container_name: aquaguard-studio-gpu
     restart: unless-stopped
     ports:
       - "7860:7860"
+    command: ["python", "app_ui.py"]
     environment:
       - PYTHONUNBUFFERED=1
       - PORT=7860
-      - API_URL=http://aquaguard-api:8000
-    command: ["python", "app_ui.py"]
+      - NVIDIA_VISIBLE_DEVICES=all
     volumes:
       - ./weights:/app/weights:ro
       - ./logs:/app/logs:rw
     depends_on:
-      aquaguard-api:
+      aquaguard-api-gpu:
         condition: service_healthy
     deploy:
       resources:
-        limits:
-          cpus: '2.0'
-          memory: 2G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     networks:
       - aquaguard-net
 

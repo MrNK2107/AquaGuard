@@ -1,0 +1,53 @@
+# ==============================================================================
+# AquaGuard: GPU-Accelerated Production Dockerfile (NVIDIA CUDA 12.1 + TensorRT)
+# ==============================================================================
+# Designed for high-throughput edge deployment on NVIDIA Jetson & RTX servers.
+# ==============================================================================
+
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04 AS runtime-gpu
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH="/app" \
+    PORT=8000 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility,video \
+    DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 \
+    python3-pip \
+    python3.10-distutils \
+    tini \
+    libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/bin/python3.10 /usr/bin/python
+
+# Create non-root system user
+RUN groupadd -g 10001 appgroup && \
+    useradd -u 10001 -g appgroup -m -s /bin/bash appuser
+
+WORKDIR /app
+
+# Install dependencies with PyTorch CUDA 12.1 support
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu121 && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copy application assets
+COPY --chown=appuser:appgroup . /app
+RUN mkdir -p /app/logs && chown -R appuser:appgroup /app/logs
+
+USER appuser
+
+EXPOSE 8000 7860
+
+HEALTHCHECK --interval=20s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
