@@ -7,8 +7,13 @@ structured detection synthesis, and confidence/unanswerable guardrails.
 
 import pytest
 import io
+import sys
+from pathlib import Path
 from PIL import Image
 from fastapi.testclient import TestClient
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from app.main import app
 
 client = TestClient(app)
