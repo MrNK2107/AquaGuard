@@ -10,8 +10,10 @@ ENV/
 env.bak/
 venv.bak/
 
-# Gradio Cache
+# Gradio Cache & Temp Storage
 .gradio/
+.tempmediaStorage/
+scratch/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -36,10 +38,12 @@ wheels/
 .installed.cfg
 *.egg
 
-# PyTorch / Ultralytics / Caches
+# PyTorch / Ultralytics / Temporary Checkpoints
 *.cache
 *.pt.tmp
 rtdetr-l.pt
+yolo*.pt
+weights/yolo*.pt
 
 # Large Raw Archives & Datasets
 archive.zip
@@ -57,7 +61,6 @@ runs_train*.log
 
 # Training Checkpoints & Intermediate Runs
 runs/
-
 
 # Testing & Coverage
 .pytest_cache/
@@ -80,5 +83,9 @@ coverage.xml
 Thumbs.db
 desktop.ini
 
-# Documents & PDFs
+# Documents, PDFs & Rendered Previews
 *.pdf
+memo/*.pdf
+memo/*_p*.png
+*.tmp
+*.bak
