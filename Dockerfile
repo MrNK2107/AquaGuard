@@ -2,7 +2,7 @@
 # AquaGuard: Industrial Multi-Stage Production Dockerfile (CPU & Edge Optimized)
 # ==============================================================================
 # Adheres to enterprise security standards:
-# - Multi-stage build for minimal image surface area (<650MB)
+# - Multi-stage build, CPU-only torch (image about 2.6 GB with the API deps, measured 2026-11-03)
 # - Non-root execution (UID 10001: appuser)
 # - Tini init system for PID 1 signal forwarding & zombie process reaping
 # - Layered dependency caching
@@ -26,7 +26,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # INSTALL_UI=1 also installs gradio (requirements-space.txt) for the studio service.
 ARG INSTALL_UI=0
 COPY requirements.txt requirements-space.txt ./
-RUN if [ "$INSTALL_UI" = "1" ]; then REQ=requirements-space.txt; else REQ=requirements.txt; fi && \n    pip install --no-cache-dir --user -r "$REQ"
+# torch/torchvision come from the CPU wheel index first: the PyPI default on linux/amd64 is the
+# CUDA build, which adds several GB of nvidia-* wheels to a CPU image (Dockerfile.gpu does the same
+# with cu121).
+RUN if [ "$INSTALL_UI" = "1" ]; then REQ=requirements-space.txt; else REQ=requirements.txt; fi && \
+    pip install --no-cache-dir --user torch torchvision --extra-index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir --user -r "$REQ"
 
 # ------------------------------------------------------------------------------
 # STAGE 2: Hardened Production Runtime
