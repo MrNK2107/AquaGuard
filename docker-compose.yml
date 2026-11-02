@@ -28,6 +28,13 @@ services:
       - AQUAGUARD_API_KEYS=${AQUAGUARD_API_KEYS:-}
       - AQUAGUARD_RATE_LIMIT=${AQUAGUARD_RATE_LIMIT:-60/minute}
       - AQUAGUARD_MISSIONS_DIR=/app/missions
+      # Request-body cap, enforced before the upload is parsed (413 over it). Keep any proxy in
+      # front at the same limit (nginx: client_max_body_size 512m;).
+      - AQUAGUARD_MAX_UPLOAD_MB=${AQUAGUARD_MAX_UPLOAD_MB:-512}
+      # Reverse proxies whose X-Forwarded-For is trusted (CIDRs). Empty = header ignored.
+      - AQUAGUARD_TRUSTED_PROXIES=${AQUAGUARD_TRUSTED_PROXIES:-}
+      - AQUAGUARD_MISSION_QUEUE=${AQUAGUARD_MISSION_QUEUE:-4}
+      - AQUAGUARD_MISSIONS_PER_CLIENT=${AQUAGUARD_MISSIONS_PER_CLIENT:-2}
     volumes:
       - ./weights:/app/weights:ro
       - ./logs:/app/logs:rw

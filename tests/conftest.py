@@ -51,6 +51,9 @@ def mission_store(monkeypatch, tmp_path):
 
     s = MissionStore(tmp_path / "missions")
     monkeypatch.setattr(mapi, "store", s)
+    # run missions inline so tests can read the result right after the POST;
+    # tests/test_mission_queue.py exercises the real worker thread
+    monkeypatch.setattr(mapi, "worker", mapi.MissionWorker(queue_size=100, per_client=100, sync=True))
     return s
 
 

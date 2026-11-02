@@ -152,7 +152,7 @@ A walk-through for a live demo is in **[DEMO.md](DEMO.md)**.
 docker compose up          # API on :8000 (console at /console) + Gradio studio on :7860
 ```
 
-`docker-compose.yml` passes `AQUAGUARD_API_KEYS` and `AQUAGUARD_RATE_LIMIT` from your shell or `.env` and mounts `./missions`. The image runs **one** uvicorn worker on purpose. The mission worker, the per-mission edit locks and the rate limiter all live in-process, so scaling out would need a job queue and a shared limiter (for example Redis). Put a reverse proxy with a request-body limit in front of it: the per-file caps are checked after the upload has been received. GPU variant: `docker-compose.gpu.yml`.
+`docker-compose.yml` passes `AQUAGUARD_API_KEYS` and `AQUAGUARD_RATE_LIMIT` from your shell or `.env` and mounts `./missions`. The image runs **one** uvicorn worker on purpose. The mission worker, the per-mission edit locks and the rate limiter all live in-process, so scaling out would need a job queue and a shared limiter (for example Redis). The API refuses bodies over `AQUAGUARD_MAX_UPLOAD_MB` (default 512) before parsing them, and checks keys and the rate limit before reading the body. If you put a reverse proxy in front, give it the same body limit (nginx: `client_max_body_size 512m;`) and list it in `AQUAGUARD_TRUSTED_PROXIES` so the rate limit sees real client IPs. GPU variant: `docker-compose.gpu.yml`.
 
 ## Tests
 

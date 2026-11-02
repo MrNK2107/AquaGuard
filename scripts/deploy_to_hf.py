@@ -60,6 +60,7 @@ def deploy(space_name: str, hf_token: str = None):
         # Survey-report tab (app_ui.py imports these from the app package)
         ("app/__init__.py", "app/__init__.py"),
         ("app/brand.py", "app/brand.py"),
+        ("app/media.py", "app/media.py"),
         ("app/mission.py", "app/mission.py"),
         ("app/report.py", "app/report.py"),
         ("app/store.py", "app/store.py"),

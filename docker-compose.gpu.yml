@@ -20,6 +20,8 @@ services:
       - AQUAGUARD_API_KEYS=${AQUAGUARD_API_KEYS:-}
       - AQUAGUARD_RATE_LIMIT=${AQUAGUARD_RATE_LIMIT:-60/minute}
       - AQUAGUARD_MISSIONS_DIR=/app/missions
+      - AQUAGUARD_MAX_UPLOAD_MB=${AQUAGUARD_MAX_UPLOAD_MB:-512}   # body cap, enforced before parsing
+      - AQUAGUARD_TRUSTED_PROXIES=${AQUAGUARD_TRUSTED_PROXIES:-}
     volumes:
       - ./weights:/app/weights:ro
       - ./logs:/app/logs:rw

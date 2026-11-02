@@ -1,9 +1,14 @@
 """Mission endpoints: upload a dive, get an inventory report, review detections, export corrections.
 
 All data routes require access (API key when configured) and are rate limited.
-Processing runs as a background task; poll ``GET /api/v1/missions/{id}`` until
-``status`` is ``ready``. One mission is processed at a time per server process
-(the detector is shared), which keeps memory flat on a small vessel PC.
+Uploads go into a bounded queue drained by one worker thread, so exactly one mission is
+processed at a time per server process (the detector is shared), which keeps memory flat
+on a small vessel PC. Poll ``GET /api/v1/missions/{id}`` until ``status`` is ``ready``.
+
+  AQUAGUARD_MISSION_QUEUE        missions that may wait behind the running one (default 4);
+                                 a full queue answers 503 with Retry-After.
+  AQUAGUARD_MISSIONS_PER_CLIENT  missions one API key / client IP may have queued or running
+                                 (default 2); over it answers 429.
 """
 
 from __future__ import annotations
@@ -11,16 +16,20 @@ from __future__ import annotations
 import csv
 import io
 import os
+import queue
+import tempfile
 import threading
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from starlette.background import BackgroundTask
 from PIL import Image
 
 from . import main as _main
 from .brand import CLASS_LABELS, CLASS_NAMES
+from .media import UnsupportedMedia, open_image
 from .mission import (IMAGE_EXTS, MAX_SIDE, VIDEO_EXTS, build_inventory, downscale, effective_detections, new_mission,
                       review_queue, run_frames, sample_video, summary)
 from .report import render_html, render_pdf
@@ -138,10 +147,11 @@ def process_mission(mission_id: str, paths: List[str], every_s: float, max_frame
             def stills():
                 for name, p in zip(names, paths):
                     try:
-                        with Image.open(p) as im:
+                        with open_image(p) as im:  # allowlisted formats, pixel cap enforced
                             im.draft("RGB", (MAX_SIDE, MAX_SIDE))  # JPEG: decode at reduced size
                             img = downscale(im)  # one full-size image in memory at a time, never a batch
-                    except (OSError, ValueError, Image.DecompressionBombError):
+                    except (OSError, ValueError, UnsupportedMedia, Image.DecompressionBombError,
+                            Image.DecompressionBombWarning):
                         continue  # unreadable or oversized image: skip it, keep the mission
                     yield name, None, img
             frames = stills()
@@ -161,12 +171,128 @@ def process_mission(mission_id: str, paths: List[str], every_s: float, max_frame
         s.clear_uploads(mission_id)
 
 
+class QueueFull(Exception):
+    pass
+
+
+class ClientBusy(Exception):
+    pass
+
+
+class MissionWorker:
+    """One worker thread fed by a bounded queue: missions run strictly one after another.
+
+    ``reserve`` is called before the upload is streamed to disk, so a rejected request costs no
+    disk; ``submit`` hands the reserved slot to the worker; ``release`` gives it back on failure.
+    Per-client accounting covers queued *and* running missions. ``sync=True`` runs jobs inline
+    (tests only).
+    """
+
+    def __init__(self, queue_size: int = 4, per_client: int = 2, sync: bool = False) -> None:
+        self.queue_size, self.per_client, self.sync = queue_size, per_client, sync
+        self._q = queue.Queue(maxsize=queue_size)
+        self._lock = threading.Lock()
+        self._idle = threading.Condition(self._lock)
+        self._waiting = 0            # reserved or queued, not started
+        self._busy = 0               # reserved + queued + running
+        self._per_client: dict = {}  # client -> reserved + queued + running
+        self._running = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    @classmethod
+    def from_env(cls, env=os.environ) -> "MissionWorker":
+        return cls(int(env.get("AQUAGUARD_MISSION_QUEUE", "4")), int(env.get("AQUAGUARD_MISSIONS_PER_CLIENT", "2")))
+
+    def outstanding(self, client: str) -> int:
+        with self._lock:
+            return self._per_client.get(client, 0)
+
+    def reserve(self, client: str) -> str:
+        with self._lock:
+            if self._per_client.get(client, 0) >= self.per_client:
+                raise ClientBusy(client)
+            if self._waiting >= self.queue_size:
+                raise QueueFull()
+            self._waiting += 1
+            self._busy += 1
+            self._per_client[client] = self._per_client.get(client, 0) + 1
+        return client
+
+    def _finish(self, client: str) -> None:  # caller holds the lock
+        self._busy -= 1
+        n = self._per_client.get(client, 1) - 1
+        if n:
+            self._per_client[client] = n
+        else:
+            self._per_client.pop(client, None)
+        self._idle.notify_all()
+
+    def release(self, token: str) -> None:
+        """Give back a reservation that never became a job (upload failed or was rejected)."""
+        with self._lock:
+            self._waiting -= 1
+            self._finish(token)
+
+    def submit(self, token: str, mission_id: str, paths: List[str], every_s: float, max_frames: int) -> None:
+        job = (token, mission_id, paths, every_s, max_frames)
+        if self.sync:
+            with self._lock:
+                self._waiting -= 1
+            self._run(job)
+            return
+        self._ensure_thread()
+        self._q.put_nowait(job)  # cannot overflow: reserve() bounds the number of waiting jobs
+
+    def _ensure_thread(self) -> None:
+        with self._lock:
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._loop, name="aquaguard-missions", daemon=True)
+                self._thread.start()
+
+    def _run(self, job) -> None:
+        token, mission_id, paths, every_s, max_frames = job
+        try:
+            process_mission(mission_id, paths, every_s, max_frames)  # module global: swappable in tests
+        except Exception as exc:  # process_mission records its own failures; never kill the worker
+            _main.logger.error(f"mission worker: {mission_id} crashed: {exc}", exc_info=True)
+        finally:
+            self._running.clear()
+            with self._lock:
+                self._finish(token)
+
+    def _loop(self) -> None:
+        while True:
+            job = self._q.get()
+            if job is None:
+                return
+            with self._lock:
+                self._waiting -= 1
+            self._running.set()
+            self._run(job)
+
+    def wait_running(self, timeout: float = 5.0) -> bool:
+        return self._running.wait(timeout)
+
+    def join(self, timeout: float = 10.0) -> bool:
+        """Wait until nothing is reserved, queued or running."""
+        with self._lock:
+            return self._idle.wait_for(lambda: self._busy == 0, timeout)
+
+    def stop(self, timeout: float = 5.0) -> None:
+        t = self._thread
+        if t is not None and t.is_alive():
+            self._q.put(None)
+            t.join(timeout)
+
+
+worker = MissionWorker.from_env()
+
+
 # ----------------------------------------------------------------------------
 # Routes
 # ----------------------------------------------------------------------------
 @router.post("", status_code=202)
 async def create_mission(
-    background: BackgroundTasks,
     files: List[UploadFile] = File(..., description="One dive video, or up to 300 still images"),
     name: str = Form("Untitled survey"),
     site: str = Form(""),
@@ -177,24 +303,41 @@ async def create_mission(
     max_frames: int = Form(120, ge=1),
     _client: str = Depends(_main.require_access(10.0)),
 ):
-    """Start a survey mission. Returns 202 with the mission id; poll ``GET /api/v1/missions/{id}``."""
+    """Start a survey mission. Returns 202 with the mission id; poll ``GET /api/v1/missions/{id}``.
+
+    429 when this client already has ``AQUAGUARD_MISSIONS_PER_CLIENT`` missions queued or
+    processing; 503 when the queue is full."""
     if floor > conf:
         raise HTTPException(status_code=422, detail="'floor' must be <= 'conf'.")
     kinds = {_kind_of(f.filename) for f in files}
     if None in kinds:
-        raise HTTPException(status_code=400, detail="Upload images (jpg/png/webp/bmp/tif) or one video (mp4/mov/avi/mkv/webm).")
+        raise HTTPException(status_code=400, detail="Upload images (jpg/png/webp/bmp) or one video (mp4/mov/avi/mkv/webm).")
     if kinds == {"video", "stills"} or ("video" in kinds and len(files) > 1):
         raise HTTPException(status_code=400, detail="Upload either one video or a batch of images, not both.")
     kind = kinds.pop()
     if kind == "stills" and len(files) > MAX_STILLS:
         raise HTTPException(status_code=400, detail=f"At most {MAX_STILLS} images per mission.")
 
-    mission = new_mission(name, kind, conf=conf, floor=floor, site=site, operator=operator,
-                          sample_every_s=every_s if kind == "video" else None,
-                          model=str(_main.MODEL_PATH if _main.MODEL_PATH.exists() else _main.FALLBACK))
-    mission["source"]["files"] = [Path(f.filename).name for f in files]
+    w = worker
+    try:
+        token = w.reserve(_client)
+    except ClientBusy:
+        raise HTTPException(status_code=429, headers={"Retry-After": "30"},
+                            detail=f"You already have {w.per_client} mission(s) queued or processing; "
+                                   "wait for one to finish.")
+    except QueueFull:
+        raise HTTPException(status_code=503, headers={"Retry-After": "30"},
+                            detail="The mission queue is full; try again shortly.")
     s = _store()
-    s.save(mission)
+    try:
+        mission = new_mission(name, kind, conf=conf, floor=floor, site=site, operator=operator,
+                              sample_every_s=every_s if kind == "video" else None,
+                              model=str(_main.MODEL_PATH if _main.MODEL_PATH.exists() else _main.FALLBACK))
+        mission["source"]["files"] = [Path(f.filename).name for f in files]
+        s.save(mission)
+    except BaseException:
+        w.release(token)
+        raise
     paths = []
     try:
         for i, f in enumerate(files):
@@ -203,12 +346,13 @@ async def create_mission(
             await _stream_to_disk(f, p, MAX_VIDEO_BYTES if kind == "video" else MAX_STILL_BYTES)
             paths.append(str(p))
     except BaseException:  # 413, client disconnect, disk full: never leave a mission stuck in "processing"
+        w.release(token)
         try:
             s.delete(mission["id"])
         except (MissionNotFound, OSError):
             pass
         raise
-    background.add_task(process_mission, mission["id"], paths, every_s, min(max_frames, MAX_FRAMES))
+    w.submit(token, mission["id"], paths, every_s, min(max_frames, MAX_FRAMES))
     return summary(mission)
 
 
@@ -393,9 +537,16 @@ def corrections_zip(mission_id: str, _client: str = Depends(_main.require_access
     """Retraining bundle: corrections.jsonl + YOLO labels/images for fully reviewed frames + data.yaml."""
     s = _store()
     m = _ready(_load(mission_id))
-    data = build_corrections_zip(m, lambda rel: s.read_frame(mission_id, rel))
-    return Response(data, media_type="application/zip",
-                    headers={"Content-Disposition": f'attachment; filename="{mission_id}-corrections.zip"'})
+    # built in a temp file and streamed, so a large export never sits in memory as one bytes object
+    tmp = tempfile.NamedTemporaryFile(prefix="aquaguard-", suffix=".zip", delete=False)
+    try:
+        with tmp:
+            build_corrections_zip(m, lambda rel: s.read_frame(mission_id, rel), out=tmp)
+    except BaseException:
+        os.unlink(tmp.name)
+        raise
+    return FileResponse(tmp.name, media_type="application/zip", filename=f"{mission_id}-corrections.zip",
+                        background=BackgroundTask(os.unlink, tmp.name))
 
 
 # ----------------------------------------------------------------------------

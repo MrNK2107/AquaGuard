@@ -37,7 +37,7 @@ MAX_SIDE = 1280           # stored frames are downscaled to this (model letterbo
 BATCH_SIZE = 8
 
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".webm"}
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}  # no TIFF: see app/media.py
 
 
 # ----------------------------------------------------------------------------
@@ -134,8 +134,11 @@ def sample_video(path: str, every_s: float = 1.0, max_frames: int = 120) -> Iter
     """
     import cv2  # opencv-python is a core dependency
 
+    from .media import check_video_caps, probe_video
+
     if every_s <= 0:
         raise ValueError("every_s must be > 0")
+    probe_video(str(path))  # container/codec/size allowlist via ffprobe, when installed
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         raise ValueError(f"could not open video: {Path(path).name}")
@@ -144,6 +147,7 @@ def sample_video(path: str, every_s: float = 1.0, max_frames: int = 120) -> Iter
         if not fps or math.isnan(fps) or fps <= 0:
             fps = 25.0
         n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        check_video_caps(int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0), n)
         step = max(1, int(round(every_s * fps)))
         emitted = 0
         idx = 0

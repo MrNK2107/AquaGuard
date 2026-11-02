@@ -32,6 +32,14 @@ This document provides complete instructions for executing, evaluating, and inte
 | `AQUAGUARD_RATE_LIMIT` | `60/minute` | Token bucket per key (or per client IP when auth is off). `N/second`, `N/minute`, `N/hour`, or `off`. |
 | `AQUAGUARD_MISSIONS_DIR` | `missions` | Where mission folders are stored. |
 | `AQUAGUARD_MAX_VIDEO_MB` / `AQUAGUARD_MAX_FRAMES` | `500` / `600` | Upload and sampling caps. |
+| `AQUAGUARD_MAX_UPLOAD_MB` | `512` | Largest request body on any route. Checked from `Content-Length` and by counting streamed (chunked) bytes, before the body is parsed; over it answers 413. `/detect` and `/reason` are further capped at 16 MB. |
+| `AQUAGUARD_TRUSTED_PROXIES` | *(unset)* | IPs/CIDRs of your reverse proxies. Only when the TCP peer is one of them is `X-Forwarded-For` read, and then only its rightmost hop that is not a trusted proxy. Unset = the header is ignored. |
+| `AQUAGUARD_MISSION_QUEUE` | `4` | Missions that may wait behind the running one (one worker thread runs them in order). Full queue = 503 with `Retry-After`. |
+| `AQUAGUARD_MISSIONS_PER_CLIENT` | `2` | Missions one key (or client IP) may have queued or running. Over it = 429. |
+| `AQUAGUARD_MAX_IMAGE_MP` | `50` | Still-image pixel cap (megapixels). JPEG, PNG, WebP and BMP only; TIFF is refused. |
+| `AQUAGUARD_MAX_VIDEO_PIXELS` / `AQUAGUARD_MAX_VIDEO_FRAMES` | `16777216` / `500000` | Per-frame size and declared frame-count caps for videos. Checked with `ffprobe` (container and codec allowlist) before decoding when it is installed, otherwise right after OpenCV opens the file. OpenCV's FFmpeg reader is limited to the `file` protocol. |
+
+API keys and the rate limit for upload routes are checked from the headers alone, before the body is read: an unauthenticated 500 MB upload is refused with 401 without being parsed.
 
 Send the key as `X-API-Key: <key>` or `Authorization: Bearer <key>`. `/`, `/health`, `/docs` and the `/console` page are public. Their data calls are not.
 

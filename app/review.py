@@ -169,9 +169,11 @@ def yolo_labels(mission: dict) -> Dict[str, str]:
     return labels
 
 
-def build_corrections_zip(mission: dict, read_frame: Optional[Callable[[str], bytes]] = None) -> bytes:
-    """Zip with corrections.jsonl, YOLO labels/images for reviewed frames, and data.yaml."""
-    buf = io.BytesIO()
+def build_corrections_zip(mission: dict, read_frame: Optional[Callable[[str], bytes]] = None, out=None):
+    """Zip with corrections.jsonl, YOLO labels/images for reviewed frames, and data.yaml.
+
+    Writes into the binary file object ``out`` when given (and returns None); otherwise returns bytes."""
+    buf = out if out is not None else io.BytesIO()
     records = correction_records(mission)
     labels = yolo_labels(mission)
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
@@ -193,4 +195,4 @@ def build_corrections_zip(mission: dict, read_frame: Optional[Callable[[str], by
                    f"corrections.jsonl  one line per human decision ({len(records)} lines)\n"
                    f"labels/, images/   YOLO labels for the {len(labels)} fully reviewed frames\n"
                    "Frames with unreviewed boxes are left out on purpose: they are not ground truth.\n")
-    return buf.getvalue()
+    return None if out is not None else buf.getvalue()

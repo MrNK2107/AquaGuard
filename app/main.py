@@ -10,7 +10,6 @@ Enterprise-grade FastAPI implementation with:
 """
 
 import io
-import math
 import threading
 from contextlib import asynccontextmanager
 import time
@@ -27,10 +26,12 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
+from starlette.middleware import Middleware
 
 from .reasoning import needs_detector, answer_from_detections, is_greeting, is_capability_question, CONF_THRESHOLD
 from .mission import detections_from_result
-from .security import AccessControl, fingerprint
+from .media import UnsupportedMedia, open_image
+from .security import AccessControl
 
 # ------------------------------------------------------------------------------
 # 1. Industrial Structured JSON Logging Configuration
@@ -96,6 +97,8 @@ app = FastAPI(
 )
 
 # Enable CORS for edge web clients & robotics dashboards
+# (UploadGuard is registered at the bottom of this module, inside CORS and telemetry, so its
+# 401/413/429 responses still carry CORS headers and are logged.)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -162,35 +165,125 @@ access = AccessControl.from_env()
 
 
 def require_access(cost: float = 1.0):
-    """Dependency factory: authenticate the caller and charge ``cost`` rate-limit tokens."""
+    """Dependency factory: authenticate the caller and charge ``cost`` rate-limit tokens.
+
+    Upload routes are already authorised and charged by :class:`UploadGuard` before their body
+    was read; the dependency then reuses that verdict instead of charging twice.
+    """
     def dependency(request: Request, response: Response):
-        ac = access  # module global, so tests and operators can swap it
-        key = ac.extract_key(request.headers)
-        client = request.client.host if request.client else "unknown"
-        if not ac.check_key(key):
-            if ac.limiter is not None:  # failed attempts spend the caller's IP bucket, so key guessing is throttled
-                d = ac.limiter.hit(f"ip:{client}", 1.0)
-                if not d.allowed:
-                    raise HTTPException(status_code=429, detail="Too many failed authentication attempts.",
-                                        headers={"Retry-After": str(max(1, math.ceil(d.retry_after)))})
-            raise HTTPException(
-                status_code=401,
-                detail="Missing or invalid API key. Send it as 'X-API-Key: <key>' or 'Authorization: Bearer <key>'.",
-                headers={"WWW-Authenticate": 'Bearer realm="aquaguard"'},
-            )
-        if not ac.enabled:
-            response.headers["X-AquaGuard-Auth"] = "disabled"
-        ident = f"key:{fingerprint(key)}" if (ac.enabled and key) else f"ip:{client}"
-        request.state.client_id = ident
-        if ac.limiter is not None:
-            d = ac.limiter.hit(ident, cost)
-            headers = {"X-RateLimit-Limit": str(d.limit), "X-RateLimit-Remaining": str(max(d.remaining, 0))}
-            if not d.allowed:
-                headers["Retry-After"] = str(max(1, math.ceil(d.retry_after)))
-                raise HTTPException(status_code=429, detail="Rate limit exceeded. Retry after the number of seconds in Retry-After.", headers=headers)
-            response.headers.update(headers)
-        return ident
+        v = request.scope.get("state", {}).get("aq_verdict")
+        if v is None:
+            ac = access  # module global, so tests and operators can swap it
+            v = ac.authorize(request.headers, request.client.host if request.client else None, cost)
+            if v.status is not None:
+                raise HTTPException(status_code=v.status, detail=v.detail, headers=v.headers)
+        response.headers.update(v.headers)
+        request.state.client_id = v.ident
+        return v.ident
     return dependency
+
+
+# ------------------------------------------------------------------------------
+# Upload guard: auth, rate limit and body-size cap BEFORE the body is read
+# ------------------------------------------------------------------------------
+def _max_request_bytes(env=None) -> int:
+    """AQUAGUARD_MAX_UPLOAD_MB: largest request body accepted on any route (default 512 MB)."""
+    import os
+    env = os.environ if env is None else env
+    mb = float(env.get("AQUAGUARD_MAX_UPLOAD_MB", "512"))
+    if mb <= 0:
+        raise ValueError("AQUAGUARD_MAX_UPLOAD_MB must be > 0")
+    return int(mb * 1024 * 1024)
+
+
+MAX_REQUEST_BYTES = _max_request_bytes()
+SINGLE_FRAME_SLACK = 1024 * 1024  # multipart framing + form fields around a 15 MB image
+
+# (method, path) -> rate-limit cost, charged before the body is parsed
+UPLOAD_ROUTES = {
+    ("POST", "/detect"): 1.0, ("POST", "/api/v1/detect"): 1.0,
+    ("POST", "/reason"): 1.0, ("POST", "/api/v1/reason"): 1.0,
+    ("POST", "/api/v1/missions"): 10.0,
+}
+_SINGLE_FRAME = {"/detect", "/api/v1/detect", "/reason", "/api/v1/reason"}
+
+
+class BodyTooLarge(HTTPException):
+    def __init__(self, limit: int):
+        super().__init__(status_code=413, detail=f"Request body exceeds the {limit // (1024 * 1024)} MB limit.")
+
+
+def _problem(status_code: int, detail: str, path: str, headers=None) -> JSONResponse:
+    return JSONResponse(status_code=status_code, headers=headers, content={
+        "type": "https://errors.aquaguard.io/http-error", "title": "HTTP Exception",
+        "status": status_code, "detail": detail, "instance": path})
+
+
+class UploadGuard:
+    """Pure ASGI middleware for the upload routes.
+
+    Starlette parses a multipart body (spooling files to disk) before any FastAPI dependency
+    runs, so an unauthenticated client could make the server swallow a 500 MB upload just to
+    get a 401. This runs first: key check and rate-limit charge from the headers alone, a 413
+    on a declared Content-Length over the cap, and a byte counter on ``receive`` that stops a
+    chunked (length-less) body at the same cap.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        method, path = scope["method"], scope["path"]
+        cost = UPLOAD_ROUTES.get((method, path))
+        has_body = method in ("POST", "PUT", "PATCH")
+        if cost is None and not has_body:
+            return await self.app(scope, receive, send)
+        limit = MAX_REQUEST_BYTES
+        if path in _SINGLE_FRAME:
+            limit = min(limit, MAX_UPLOAD_BYTES + SINGLE_FRAME_SLACK)
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+        if cost is not None:
+            peer = scope.get("client")[0] if scope.get("client") else None
+            v = access.authorize(headers, peer, cost)
+            if v.status is not None:
+                return await _problem(v.status, v.detail, path, v.headers)(scope, receive, send)
+            scope.setdefault("state", {})["aq_verdict"] = v
+        declared = headers.get("content-length")
+        if declared is not None:
+            try:
+                too_big = int(declared) > limit
+            except ValueError:
+                return await _problem(400, "Invalid Content-Length.", path)(scope, receive, send)
+            if too_big:
+                return await _problem(413, BodyTooLarge(limit).detail, path,
+                                      {"Connection": "close"})(scope, receive, send)
+
+        seen = 0
+        started = False
+
+        async def counted_receive():
+            nonlocal seen
+            msg = await receive()
+            if msg["type"] == "http.request":
+                seen += len(msg.get("body", b""))
+                if seen > limit:
+                    raise BodyTooLarge(limit)
+            return msg
+
+        async def tracking_send(msg):
+            nonlocal started
+            if msg["type"] == "http.response.start":
+                started = True
+            await send(msg)
+
+        try:
+            await self.app(scope, counted_receive, tracking_send)
+        except BodyTooLarge as exc:  # raised outside a route (e.g. by a body reader in middleware)
+            if started:
+                raise
+            await _problem(413, exc.detail, path, {"Connection": "close"})(scope, receive, send)
 
 
 async def read_image(file: UploadFile) -> Image.Image:
@@ -201,7 +294,12 @@ async def read_image(file: UploadFile) -> Image.Image:
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Image size exceeds 15MB limit.")
     try:
-        return Image.open(io.BytesIO(data)).convert("RGB")
+        with open_image(io.BytesIO(data)) as im:
+            return im.convert("RGB")
+    except UnsupportedMedia as exc:
+        raise HTTPException(status_code=415, detail=str(exc))
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+        raise HTTPException(status_code=413, detail=str(exc))
     except Exception:
         raise HTTPException(status_code=400, detail="Corrupted image binary could not be decoded.")
 
@@ -383,3 +481,8 @@ from .missions_api import console_router, router as missions_router  # noqa: E40
 
 app.include_router(missions_router)
 app.include_router(console_router)
+
+
+# Order (outermost first): telemetry, CORS, UploadGuard. add_middleware() prepends, so the guard
+# is appended to sit innermost: its 401/413/429 replies still get CORS headers and access logs.
+app.user_middleware.append(Middleware(UploadGuard))

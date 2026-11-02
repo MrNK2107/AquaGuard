@@ -144,3 +144,117 @@ def test_failed_auth_is_throttled_per_ip(client, secured, jpeg_bytes):
     assert _post(client, jpeg_bytes, {"X-API-Key": "guess2"}).status_code == 401
     r = _post(client, jpeg_bytes, {"X-API-Key": "guess3"})
     assert r.status_code == 429 and "Retry-After" in r.headers
+
+
+# --- review 2026-11-03: LRU buckets, trusted proxies, key-keyed limits, digests -------------
+from app.security import client_ip, parse_trusted_proxies  # noqa: E402
+
+
+def test_bucket_eviction_is_lru_not_oldest_insert():
+    clock = Clock()
+    rl = RateLimiter(5, 60.0, clock=clock, max_buckets=3)
+    for ident in ("a", "b", "c"):
+        rl.hit(ident)
+    rl.hit("a")            # a is now most recently used
+    rl.hit("d")            # evicts exactly one: the least recently used (b)
+    assert list(rl._buckets) == ["c", "a", "d"]
+    assert len(rl._buckets) == 3
+
+
+def test_evicting_a_drained_bucket_does_not_happen_while_it_is_hot():
+    clock = Clock()
+    rl = RateLimiter(1, 3600.0, clock=clock, max_buckets=2)
+    assert rl.hit("attacker").allowed and not rl.hit("attacker").allowed
+    for i in range(10):    # churn other identities, but the attacker keeps hammering
+        rl.hit(f"x{i}")
+        assert not rl.hit("attacker").allowed
+
+
+def test_parse_trusted_proxies():
+    nets = parse_trusted_proxies(" 10.0.0.0/8, 172.18.0.5 ,::1")
+    assert [str(n) for n in nets] == ["10.0.0.0/8", "172.18.0.5/32", "::1/128"]
+    assert parse_trusted_proxies(None) == [] and parse_trusted_proxies("") == []
+    with pytest.raises(ValueError):
+        parse_trusted_proxies("not-an-ip")
+
+
+@pytest.mark.parametrize("peer,xff,expected", [
+    ("203.0.113.9", "1.2.3.4", "203.0.113.9"),                 # untrusted peer: header ignored
+    ("172.18.0.5", None, "172.18.0.5"),                        # trusted peer, no header
+    ("172.18.0.5", "198.51.100.7", "198.51.100.7"),            # trusted proxy forwards the client
+    ("172.18.0.5", "6.6.6.6, 198.51.100.7", "198.51.100.7"),   # spoofed left hops are ignored
+    ("172.18.0.5", "198.51.100.7, 10.1.2.3", "198.51.100.7"),  # skip trusted hops from the right
+    ("172.18.0.5", "garbage, 198.51.100.7", "198.51.100.7"),
+    ("172.18.0.5", "198.51.100.7, garbage", "172.18.0.5"),     # unparsable rightmost hop: fall back to peer
+    ("172.18.0.5", "10.0.0.1, 10.0.0.2", "10.0.0.1"),          # every hop trusted: leftmost
+])
+def test_client_ip_rightmost_untrusted(peer, xff, expected):
+    trusted = parse_trusted_proxies("172.18.0.0/16,10.0.0.0/8")
+    assert client_ip(peer, xff, trusted) == expected
+
+
+GONE = "/api/v1/missions/m-00000000-000000-000000"  # DELETE costs 1 token and answers 404
+
+
+def _limited(main, monkeypatch, env):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(main, "access", AccessControl.from_env(env))
+    return TestClient
+
+
+def test_spoofed_xff_from_untrusted_peer_shares_one_bucket(client, monkeypatch):
+    """probe_aq.py: rotating X-Forwarded-For must not give an attacker a fresh failed-auth bucket each time."""
+    import app.main as main
+
+    TC = _limited(main, monkeypatch, {"AQUAGUARD_API_KEYS": "k", "AQUAGUARD_RATE_LIMIT": "5/minute"})
+    c = TC(main.app)
+    codes = [c.get("/api/v1/missions", headers={"X-Forwarded-For": f"10.0.0.{i}", "X-API-Key": "bad"}).status_code
+             for i in range(8)]
+    assert codes == [401] * 5 + [429] * 3
+
+
+def test_trusted_proxy_gives_each_real_client_its_own_bucket(client, monkeypatch):
+    """probe_aq2.py: behind a proxy at 172.18.0.5 all clients used to share the proxy's bucket."""
+    import app.main as main
+
+    TC = _limited(main, monkeypatch, {"AQUAGUARD_RATE_LIMIT": "1/minute", "AQUAGUARD_TRUSTED_PROXIES": "172.18.0.0/16"})
+    c = TC(main.app, client=("172.18.0.5", 5000))
+    codes = [c.delete(GONE, headers={"X-Forwarded-For": f"203.0.113.{i}"}).status_code for i in range(3)]
+    assert codes == [404, 404, 404]
+    assert c.delete(GONE, headers={"X-Forwarded-For": "203.0.113.0"}).status_code == 429
+    # a client behind the trusted proxy can't spoof its way out by prepending hops
+    assert c.delete(GONE, headers={"X-Forwarded-For": "1.1.1.1, 203.0.113.0"}).status_code == 429
+
+
+def test_untrusted_peer_cannot_use_xff_even_when_proxies_configured(client, monkeypatch):
+    import app.main as main
+
+    TC = _limited(main, monkeypatch, {"AQUAGUARD_RATE_LIMIT": "1/minute", "AQUAGUARD_TRUSTED_PROXIES": "172.18.0.0/16"})
+    c = TC(main.app, client=("203.0.113.50", 5000))
+    assert c.delete(GONE, headers={"X-Forwarded-For": "1.1.1.1"}).status_code == 404
+    assert c.delete(GONE, headers={"X-Forwarded-For": "2.2.2.2"}).status_code == 429
+
+
+def test_with_auth_on_the_limit_follows_the_key_not_the_ip(client, monkeypatch):
+    import app.main as main
+
+    TC = _limited(main, monkeypatch, {"AQUAGUARD_API_KEYS": "k1,k2", "AQUAGUARD_RATE_LIMIT": "1/minute"})
+    a = TC(main.app, client=("198.51.100.1", 1))
+    b = TC(main.app, client=("198.51.100.2", 1))
+    assert a.delete(GONE, headers={"X-API-Key": "k1"}).status_code == 404
+    # same key from another IP: same bucket
+    assert b.delete(GONE, headers={"X-API-Key": "k1"}).status_code == 429
+    # another key from the same IP: its own bucket
+    assert a.delete(GONE, headers={"X-API-Key": "k2"}).status_code == 404
+
+
+def test_keys_are_compared_as_sha256_digests():
+    import hashlib
+
+    ac = AccessControl(["short", "a-much-longer-key"], None)
+    assert all(len(d) == 32 for d in ac._digests)
+    assert hashlib.sha256(b"short").digest() in ac._digests
+    assert ac.check_key("short") and ac.check_key("a-much-longer-key")
+    assert not ac.check_key("shor") and not ac.check_key("short ") and not ac.check_key("")
+    assert not hasattr(ac, "_keys")  # raw keys are not kept around
