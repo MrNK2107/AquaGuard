@@ -1,252 +1,190 @@
 <div align="center">
 
-# 🌊 AquaGuard: SeaClear RT-DETR
-### Real-Time Underwater Marine Debris Detection & Reasoning API
+# AquaGuard
 
-[![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Live%20Demo-yellow?style=for-the-badge&logo=huggingface&logoColor=white)](https://huggingface.co/spaces/MrPhantom07/aquaguard)
-[![Technical Report](https://img.shields.io/badge/%F0%9F%93%9D%20Technical%20Report-TECHNICAL__REPORT.md-purple?style=for-the-badge)](memo/TECHNICAL_REPORT.md)
-[![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![PyTorch 2.1+](https://img.shields.io/badge/PyTorch-2.1%2B-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![RT-DETR-L](https://img.shields.io/badge/Model-RT--DETR--Large-FF6F00?style=for-the-badge&logo=target&logoColor=white)](https://github.com/lyuwenyu/RT-DETR)
-[![Docker Ready](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
-[![License MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)](LICENSE)
+### Debris survey for ROV cleanup crews
 
-<p align="center">
-  <b>Fine-Tuned Real-Time Detection Transformer + Framework-Free Structured Reasoning Engine</b><br>
-  Engineered for Autonomous Remotely Operated Vehicles (ROVs) deployed on benthic seabed cleanup missions.
-</p>
+Upload a dive video or a batch of seabed stills. AquaGuard counts tyres, nets, bottles, cans and bags frame by frame, sends the uncertain boxes to a person for a yes or no, and gives you a survey report plus a corrections file for retraining.
 
-> 🚀 **Live Interactive Web Demo**: **[https://huggingface.co/spaces/MrPhantom07/aquaguard](https://huggingface.co/spaces/MrPhantom07/aquaguard)** *(Running on ZeroGPU)*  
-> 🌐 **Direct Fullscreen App**: **[https://mrphantom07-aquaguard.hf.space](https://mrphantom07-aquaguard.hf.space)**
+[![Hugging Face Space](https://img.shields.io/badge/Live%20demo-Hugging%20Face%20Space-FFB000?style=for-the-badge&logo=huggingface&logoColor=white)](https://huggingface.co/spaces/MrPhantom07/aquaguard)
+[![CI](https://github.com/MrNK2107/AquaGuard/actions/workflows/ci.yml/badge.svg)](.github/workflows/ci.yml)
+[![Technical report](https://img.shields.io/badge/Technical%20report-memo%2FTECHNICAL__REPORT.md-0E3A4F?style=for-the-badge)](memo/TECHNICAL_REPORT.md)
 
----
-
-### 📊 Benchmark Scoreboard (Holdout Test Split — 858 Images / 1,395 Annotations)
-
-| Metric | Score | Performance Level | Real-Time Edge Status |
-| :--- | :---: | :---: | :---: |
-| **mAP @ 0.50** | **`92.32%`** | 🟢 **State-of-the-Art** | Optimal Detection Reliability |
-| **mAP @ 0.50:0.95** | **`69.62%`** | 🟢 **High Localization Rigor** | Sub-pixel Bounding Box Tightness |
-| **Precision** | **`88.96%`** | 🟢 **Low False-Alarm Rate** | Prevents False Positive Gripping |
-| **Recall** | **`87.52%`** | 🟢 **High Discovery Rate** | Maximizes Debris Extraction |
-| **Inference Latency** | **`15.7 ms`** | ⚡ **~64 FPS End-to-End** | Real-Time ROV Video Feed Ready |
+[Product brief](docs/PRODUCT.md) · [Demo script](DEMO.md) · [API guide](API_USAGE.md) · [Technical report](memo/TECHNICAL_REPORT.md)
 
 </div>
 
----
+![Survey report for a 12-second transect: inventory by class, per-frame timeline, hotspot frames](docs/screenshots/report_video.png)
 
-## 📌 Quick Navigation & Key Resources
-
-| Resource | Description | Direct Link |
-| :--- | :--- | :---: |
-| 🚀 **Live ZeroGPU Space** | Interactive Gradio Web Demo on Hugging Face | [**Open Live App**](https://huggingface.co/spaces/MrPhantom07/aquaguard) |
-| 🌐 **Fullscreen App** | Direct standalone web application interface | [**Open Fullscreen**](https://mrphantom07-aquaguard.hf.space) |
-| 📑 **Technical Report** | Comprehensive system audit with 5 failure cases & root-cause analyses | [**`memo/TECHNICAL_REPORT.md`**](memo/TECHNICAL_REPORT.md) |
-| 🔌 **API Usage Guide** | Endpoints, payload schemas, and Python/cURL examples | [**`API_USAGE.md`**](API_USAGE.md) |
-| 📦 **Trained Checkpoint** | Production fine-tuned RT-DETR-L weights (`92.32%` mAP50)| [**`weights/best.pt`**](weights/best.pt) |
+*A real survey report. It was built from 24 frames sampled from a SeaClear test-split clip and run on CPU tonight. The range "3–41" is explained below.*
 
 ---
 
-## 📌 Executive Summary
+## What it does
 
-**AquaGuard** is an end-to-end Computer Vision and Natural Language Decision System designed for **underwater marine debris identification** across 6 fine-grained **non-COCO** anthropogenic waste classes. 
+| | |
+| :--- | :--- |
+| **1. Mission reports** | One dive is one mission. A video is sampled every *N* seconds; stills are used as they are. You get an inventory by class, a per-frame timeline, the busiest frames with boxes drawn, and the counting rules, as a single HTML file (it prints to A4) or a PDF. A CSV of every box is also available. |
+| **2. Review queue** | Boxes below the auto-count threshold (default 0.50) are **not counted** until a person confirms them. The queue shows the most ambiguous boxes first. Keys: <kbd>Y</kbd> confirm, <kbd>N</kbd> not debris, <kbd>1</kbd> to <kbd>6</kbd> relabel, <kbd>A</kbd> draw a missed item, <kbd>F</kbd> accept the rest of the frame, <kbd>U</kbd> undo. `corrections.zip` holds a JSONL file with what the model said and what the reviewer said, plus YOLO labels and images for the fully reviewed frames. |
+| **3. Secured API** | The REST API gets API keys (`AQUAGUARD_API_KEYS`) and a per-key token-bucket rate limit (`AQUAGUARD_RATE_LIMIT`, default `60/minute`) with `X-RateLimit-*` and `Retry-After` headers. With auth off, every response carries `X-AquaGuard-Auth: disabled`. |
 
-Built on the **SeaClear Marine Debris Benchmark** (*Nature Scientific Data*, 4TU.ResearchData), AquaGuard bridges the gap between deep vision backbones and actionable robotic intelligence by combining:
-1. **Part A (RT-DETR-L Transformer)**: Fine-tuned hybrid encoder model with deformable self-attention resilient to underwater red-light absorption, turbidity, and wave caustics.
-2. **Part B (Framework-Free Reasoning Engine)**: Pure, zero-dependency Python reasoning pipeline (strictly zero LangChain/CrewAI bloat) supporting keyword intent routing, spatial bounding box synthesis, and confidence guardrails.
-3. **Part C (Production FastAPI Service)**: Edge-ready web API delivering $<20\text{ ms}$ query latency and automated OpenAPI documentation.
+The single-frame **reasoning assistant** is still there: ask "How many plastic bottles?" or "Where is the net?". It answers from the detections and refuses when they can't support an answer.
 
----
+| Console: missions | Review queue | Mission page with the report |
+| :---: | :---: | :---: |
+| ![Missions list](docs/screenshots/console.png) | ![Review queue with the focused box and keyboard actions](docs/screenshots/review.png) | ![Mission page](docs/screenshots/mission.png) |
 
-## 🏷️ Class-by-Class Performance Breakdown
+### How the counting works
 
-Evaluated on the **15% hold-out test set** (858 unseen images across multiple ROV dives):
-
-```
-========================================================================================
- Class Taxonomy               Instances     Precision     Recall     mAP@50     mAP@50-95
-========================================================================================
- 🛍️  bag_plastic                 138          97.0%        96.0%      99.2%       78.9%
- 🛞  tire_rubber                 378          97.7%        97.4%      97.7%       85.4%
- 🍾  bottle_plastic              194          88.8%        89.3%      93.5%       70.2%
- 🕸️  net_plastic                 145          91.8%        82.1%      91.5%       65.2%
- 🥫  can_metal                   176          87.1%        75.6%      88.6%       56.5%
- 🍶  bottle_glass                364          86.0%        82.2%      83.6%       63.9%
-----------------------------------------------------------------------------------------
- 🎯  ALL CLASSES                1,395         88.96%       87.52%     92.32%      69.62%
-========================================================================================
-```
+- `conf ≥ 0.50`: counted automatically. `0.25 ≤ conf < 0.50`: waits for review and is not counted. Below 0.25: dropped. All three thresholds can be set per mission.
+- A reviewer's decision (confirm, relabel, reject, or an added box) always overrides the model. Model output and decisions are stored separately, so the report can be re-issued after review.
+- **Video gives a range, not one number.** The ROV sees the same tyre in many consecutive frames, and AquaGuard has no object tracking yet. The lower bound is the per-class peak in any single frame. The upper bound is all counted detections. Stills are treated as independent photos.
 
 ---
 
-## 🔬 Visual Evaluation & Training Artifacts
+## Quickstart
 
-The training run (30 epochs, AdamW, $\text{lr}=10^{-4}$) generated full audit curves in [`runs/detect/train-2/`](runs/detect/train-2):
-
-| Evaluation Artifact | Description | Direct File Link |
-| :--- | :--- | :--- |
-| **Training & Loss Curves** | Metric convergence across 30 epochs for box, giou, and cls losses | [`results.png`](runs/detect/train-2/results.png) |
-| **Normalized Confusion Matrix** | Cross-class classification accuracy & background confusion | [`confusion_matrix_normalized.png`](runs/detect/train-2/confusion_matrix_normalized.png) |
-| **Precision-Recall Curve** | Area Under Curve (AUC) across all IoU evaluation thresholds | [`BoxPR_curve.png`](runs/detect/train-2/BoxPR_curve.png) |
-| **F1 Confidence Curve** | Optimal operational F1-score vs confidence threshold profile | [`BoxF1_curve.png`](runs/detect/train-2/BoxF1_curve.png) |
-| **Sample Validation Predictions** | Visual bounding box overlays on real benthic ROV test footage | [`val_batch0_pred.jpg`](runs/detect/train-2/val_batch0_pred.jpg) |
-
----
-
-## 🏛️ System Architecture
-
-```
-                                  ┌─────────────────────────────────────────┐
-                                  │      Client / ROV Edge Controller       │
-                                  └────────────────────┬────────────────────┘
-                                                       │
-                                   HTTP POST Multipart │ /api/v1/reason
-                                                       ▼
-                      ┌─────────────────────────────────────────────────────────────────┐
-                      │              FastAPI Production Web Service                     │
-                      └────────────────────────┬────────────────────────────────────────┘
-                                               │
-                                               ▼
-                      ┌─────────────────────────────────────────────────────────────────┐
-                      │         Part B: Framework-Free Intent Routing Engine            │
-                      └──────────────┬───────────────────────────────────┬──────────────┘
-                                     │                                   │
-              [Intent: Unrelated /   │                                   │ [Intent: Vision Required /
-               Chitchat / Greeting]  │                                   │  Count / Locate / Verify]
-                                     ▼                                   ▼
-                      ┌───────────────────────────────┐ ┌───────────────────────────────┐
-                      │  Instant Rule-Based Responder │ │   Part A: RT-DETR-L Detector  │
-                      │    (Latency < 1 ms, 0 GPU)    │ │ (Inference: 15.7 ms on GPU)   │
-                      └───────────────────────────────┘ └───────────────┬───────────────┘
-                                                                        │
-                                                                        ▼
-                                                        ┌───────────────────────────────┐
-                                                        │  Spatial Reasoning & Guardrail│
-                                                        │  - Bbox Coordinate Analysis   │
-                                                        │  - Non-visual Query Filter    │
-                                                        │  - Low Confidence Filter      │
-                                                        └───────────────┬───────────────┘
-                                                                        │
-                                                                        ▼
-                                                        ┌───────────────────────────────┐
-                                                        │  Structured JSON API Response │
-                                                        └───────────────────────────────┘
-```
-
----
-
-## 🛡️ Guardrails & Decision Logic (Part B)
-
-The reasoning layer is built purely in standard Python ([`app/reasoning.py`](app/reasoning.py)), strictly complying with **Hard Constraint #1** (no LangChain, LangGraph, CrewAI, or AutoGen):
-
-1. **Intent Routing**: Categorizes queries into `DETECTION_REQUIRED` vs `UNRELATED_QUERY`. Non-vision queries (greetings, general capabilities) are resolved immediately without invoking neural network weights.
-2. **Confidence Guardrails**: Whenever detections fall below $\text{conf} = 0.35$, the system refuses to speculate and returns:
-   > *"Insufficient information: no objects were detected with sufficient confidence to answer confidently."*
-3. **Unobservable Metadata Guardrail**: Protects the system against non-visual hallucination when asked for unobservable physical attributes (e.g. *water depth in meters*, *exact weight in kg*, *manufacturer brand*).
-
-#### Example Guardrail Payloads:
-```json
-// POST /reason with question: "What is the water depth and weight of this tire?"
-{
-  "answer": "Insufficient information: The requested attribute (e.g. depth, weight, brand, or temperature) cannot be determined from visual bounding box detections.",
-  "used_detector": true,
-  "count": 1,
-  "insufficient": true,
-  "reason": "confidence guardrail: insufficient to answer"
-}
-```
-
----
-
-## 🚀 Quickstart Guide
-
-### 1. Environment Setup
 ```bash
-# Clone the repository and create virtual environment
-python -m venv .venv
-
-# Activate environment
-.venv\Scripts\activate       # Windows
-# source .venv/bin/activate  # Linux/macOS
-
-# Install dependencies
 pip install -r requirements.txt
+python -m uvicorn app.main:app --port 8000
+# open http://localhost:8000/console  (landing page at /, OpenAPI at /docs)
 ```
 
-### 2. Run Automated Verification Tests
+Turn on keys and a rate limit for anything that isn't your own laptop:
+
 ```bash
-python -m pytest tests/test_api.py -v
+export AQUAGUARD_API_KEYS="deck-1-key,analyst-key"     # comma-separated; unset = auth off
+export AQUAGUARD_RATE_LIMIT="60/minute"                # or "off"
+export AQUAGUARD_MISSIONS_DIR=/data/missions           # default ./missions
 ```
 
-### 3. Launch Local FastAPI Server
+**No server (on the boat):**
+
 ```bash
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+python scripts/mission_report.py dive.mp4 --name "Harbour wall T3" --site "Pier 4" --every 2 --pdf
+python scripts/mission_report.py stills/ --name "Lokrum stills"
 ```
-Interactive Swagger UI documentation is available at: **`http://localhost:8000/docs`**
 
-### 4. Run via Docker
-```bash
-# Build production Docker container
-docker build -t seaclear-rtdetr-api .
-
-# Run containerized service
-docker run -p 8000:8000 seaclear-rtdetr-api
-```
+The CLI writes into the same `missions/` folder, so you can review the mission in the console later. A mission is a plain folder (`mission.json` plus JPEG frames) that you can copy to a USB stick.
 
 ---
 
-## 🔌 API Endpoints Specification
+## Accuracy and speed, honestly
 
-| Method | Route | Description | Key Parameters |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/health` | System health check & metadata | None |
-| `POST` | `/detect` | **Part A**: Raw bounding box object detection | `file` (Image), `conf` (float, default `0.25`) |
-| `POST` | `/reason` | **Part B**: Framework-free structured reasoning | `file` (Image), `question` (str), `conf` (float) |
+**Benchmark (SeaClear hold-out split: 858 images, 1,395 boxes).** The numbers come from [`eval_results/audit_metrics.json`](eval_results/audit_metrics.json) and the [technical report](memo/TECHNICAL_REPORT.md).
 
-For comprehensive payload schemas, `curl` requests, and Python SDK code samples, refer to [`API_USAGE.md`](API_USAGE.md).
+| mAP@50 | mAP@50:95 | Precision | Recall | GPU latency |
+| :---: | :---: | :---: | :---: | :---: |
+| **92.32%** | **69.62%** | **88.96%** | **87.52%** | **15.7 ms / image** |
 
----
+| Class | mAP@50 | mAP@50:95 |
+| :--- | :---: | :---: |
+| Plastic bag (`bag_plastic`) | 99.2% | 78.8% |
+| Tyre (`tire_rubber`) | 97.7% | 83.9% |
+| Plastic bottle (`bottle_plastic`) | 93.5% | 68.3% |
+| Net / rope (`net_plastic`) | 91.5% | 70.2% |
+| Metal can (`can_metal`) | 88.6% | 59.0% |
+| Glass bottle (`bottle_glass`) | 83.6% | 57.4% |
 
-## 📂 Repository Layout
+**What the numbers don't tell you.** The split is **per image**, not per dive (see section 2.2 of the technical report: a dive-level split left no nets in training). Neighbouring frames of the same clip therefore appear in both training and test, so these scores are optimistic for a new site, camera or water type. This is the reason review is built into the workflow rather than offered as an extra. Glass bottles and metal cans are the weakest classes, and in the sample missions most of the "awaiting review" boxes were glass bottles. The five documented failure modes (red-light loss on metal, glass caustics, burial, bio-fouling, silt clouds) are covered in the [technical report](memo/TECHNICAL_REPORT.md).
 
-```
-├── app/
-│   ├── main.py                  # FastAPI application with /detect and /reason endpoints
-│   └── reasoning.py             # Framework-free pure Python reasoning & guardrails
-├── data/
-│   ├── dataset_filtered.json    # Filtered SeaClear COCO annotations
-│   └── yolo/                    # YOLO formatted splits (train: 4004, val: 858, test: 858)
-├── eval_results/
-│   └── audit_metrics.json       # JSON export of 15% holdout test evaluation scores
-├── memo/
-│   └── TECHNICAL_REPORT.md      # Publication-grade technical audit & failure mode report
-├── runs/detect/train-2/         # Training logs, checkpoints, PR curves, and confusion matrices
-├── scripts/
-│   ├── prepare_data.py          # Two-stage stratified dataset preparation pipeline
-│   └── evaluate_ood_locations.py# Cross-location and test evaluation script
-├── tests/
-│   └── test_api.py              # Automated pytest suite for endpoints & guardrails
-├── weights/
-│   └── best.pt                  # Production fine-tuned RT-DETR-L checkpoint
-├── Dockerfile                   # Production Docker deployment container
-├── requirements.txt             # Pinned project dependencies
-├── API_USAGE.md                 # Detailed endpoint usage guide and payload examples
-└── README.md                    # Project documentation and benchmark scoreboard
-```
+**CPU latency (measured).** This is `python scripts/cpu_latency.py`: the same `model.predict` call `/detect` makes, `device="cpu"`, 4 torch threads, 2 warm-up runs and 10 timed runs per image, on the three validation mosaics in `memo/assets/`.
+
+| Image | Size | Wall median (ms) | Wall p95 (ms) | Pre / Infer / Post median (ms) |
+|---|---|---|---|---|
+| val_batch0_labels.jpg | 1920x1920 | 326 | 459 | 1.9 / 294 / 0.3 |
+| val_batch1_labels.jpg | 1920x1920 | 366 | 411 | 1.9 / 332 / 0.3 |
+| val_batch2_labels.jpg | 1920x1920 | 314 | 432 | 1.8 / 282 / 0.3 |
+
+**Mission throughput (measured, 2026-11-03).** `scripts/mission_report.py` ran on CPU with 4 threads and batches of 8 frames:
+
+- 12 test-split stills took 5.3 s (0.44 s per frame).
+- 24 frames sampled from a 12 s test-split clip took 8.3 s (0.35 s per frame).
+
+Both times include decoding, downscaling and saving the frames. The machine is an AMD Zen 4 laptop CPU (16 logical cores, 4 used) with torch 2.11 and ultralytics 8.4.112. Other jobs were running at the same time, so treat the figures as rough.
 
 ---
 
-## 📑 Comprehensive Technical Report & System Audit
+## API
 
-A publication-grade **System Audit, Dataset Analysis & Failure Mode Report** is documented in **[`memo/TECHNICAL_REPORT.md`](memo/TECHNICAL_REPORT.md)**, containing:
-1. **System Architecture & Dataflow**: Mermaid pipeline linking client, intent routing, neural detector, and spatial guardrails.
-2. **Dataset Annotation & Spatial Heatmaps**: Bounding box spatial density and multi-class distribution plots.
-3. **Training & Metric Progression Curves**: 30-epoch loss convergence, PR curves, and normalized confusion matrices.
-4. **Five (5) Physical Failure Mode Root-Cause Analyses**:
-   - **Red-Wavelength Optical Attenuation**: Metal debris contrast loss in deep silt.
-   - **Optical Caustics & Glass Refraction**: Dynamic sunlight patterns breaking transparent bottle contours.
-   - **Partial Sediment Burial**: Proposals failure on $>70\%$ submerged objects.
-   - **Marine Bio-Fouling**: Barnacle & macro-algal encrustation masking rubber tire treads.
-   - **Thruster-Induced Motion Blur**: Resuspended sediment clouds mimicking discarded fishing nets.
-5. **Part B Framework-Free Decision Engine**: Complete logic breakdown and explicit *"Insufficient Information"* guardrail examples.
+| Method | Route | What it does |
+| :--- | :--- | :--- |
+| `GET` | `/health` | Service, model and auth status (public) |
+| `POST` | `/api/v1/detect` | Boxes for one image (`file`, `conf`) |
+| `POST` | `/api/v1/reason` | Grounded answer about one image (`file`, `question`, `conf`) |
+| `POST` | `/api/v1/missions` | Start a mission: `files` (one video or up to 300 images), `name`, `site`, `operator`, `conf`, `floor`, `every_s`, `max_frames`. Returns **202**; poll until `status` is `ready` |
+| `GET` | `/api/v1/missions[/{id}]` | List missions, or one mission with its inventory (`?frames=true` adds the boxes) |
+| `GET` | `/api/v1/missions/{id}/report.html` · `report.pdf` · `detections.csv` | Reports and exports |
+| `GET` | `/api/v1/missions/{id}/review/queue` | Undecided boxes, most ambiguous first |
+| `POST` | `/api/v1/missions/{id}/review` | `{"detection_id", "action": confirm/reject/relabel/undo, "class_name"?, "reviewer"?}` |
+| `POST` | `/api/v1/missions/{id}/frames/{i}/confirm` · `/boxes` | Accept the rest of a frame, or add a missed box |
+| `GET` | `/api/v1/missions/{id}/corrections.zip` · `.jsonl` | Retraining export |
+
+`/detect`, `/reason` and `/health` are also served without the `/api/v1` prefix for older clients. Errors are RFC 7807 problem documents. Send keys as `X-API-Key: <key>` or `Authorization: Bearer <key>`. Mission creation costs 10 rate-limit tokens, a PDF 2, review clicks 0.1. Examples are in [`API_USAGE.md`](API_USAGE.md).
+
+### Reasoning guardrails (single frame)
+
+The reasoning layer is plain Python ([`app/reasoning.py`](app/reasoning.py)), with no LLM and no agent framework.
+- **Intent routing:** greetings and capability questions are answered without running the detector.
+- **Class grounding:** "plastic bottles" means `bottle_plastic`, not every bottle. "Is there a tyre?" answers **No** when only cans were seen.
+- **Refusals:** questions about depth, weight, brand or temperature, and questions where every detection is below `conf`, get "Insufficient information …" rather than a guess.
+
+---
+
+## Live demo
+
+The [Hugging Face Space](https://huggingface.co/spaces/MrPhantom07/aquaguard) runs the Gradio studio (`app_ui.py`). On this branch the studio also has a **Survey report** tab: upload up to 40 stills and download the same HTML report the API produces. **The live Space has not been redeployed with this branch yet**, so today it shows the single-frame studio only. The console, review queue and API keys are part of the self-hosted API, not the Space.
+
+![Gradio studio, Survey report tab](docs/screenshots/gradio_survey.png)
+
+```bash
+pip install -r requirements-space.txt    # core deps + gradio 6.15.1 (the Space's version)
+python app_ui.py                         # http://localhost:7860
+```
+
+A walk-through for a live demo is in **[DEMO.md](DEMO.md)**.
+
+---
+
+## Deploy
+
+```bash
+docker compose up          # API on :8000 (console at /console) + Gradio studio on :7860
+```
+
+`docker-compose.yml` passes `AQUAGUARD_API_KEYS` and `AQUAGUARD_RATE_LIMIT` from your shell or `.env` and mounts `./missions`. The image runs **one** uvicorn worker on purpose. The mission worker, the per-mission edit locks and the rate limiter all live in-process, so scaling out would need a job queue and a shared limiter (for example Redis). Put a reverse proxy with a request-body limit in front of it: the per-file caps are checked after the upload has been received. GPU variant: `docker-compose.gpu.yml`.
+
+## Tests
+
+```bash
+python -m pytest -m "not integration" -q   # mocked detector: no weights, no GPU (what CI runs)
+python -m pytest -q                        # + end-to-end against weights/best.pt
+```
+
+The mission, review, report, security and API tests use a fake detector, so they need no model. CI runs them on CPU-only PyTorch.
+
+## Repository layout
+
+```
+app/
+  main.py          FastAPI app: /detect, /reason, health, landing page, API-key + rate-limit dependency
+  missions_api.py  /api/v1/missions: upload, background processing, reports, review, exports, /console
+  mission.py       Frames -> inventory: counting rule, video sampling, review queue order, estimates
+  review.py        Confirm / reject / relabel / add box; corrections.jsonl + YOLO export
+  report.py        Self-contained HTML report (inline SVG charts) and matplotlib PDF
+  security.py      API keys (constant-time compare) and token-bucket rate limiter
+  store.py         File-backed mission storage (missions/<id>/mission.json + frames/)
+  brand.py         Palette, colour-blind-safe class colours, box drawing
+  reasoning.py     Single-frame intent routing, class grounding, guardrails
+  web/             index.html (landing) and console.html (operator console)
+app_ui.py          Gradio studio (HF Space): single frame + Survey report tab
+scripts/           mission_report.py (offline CLI), cpu_latency.py, training/eval/data prep, deploy_to_hf.py
+tests/             Unit + API tests with a fake detector; test_api.py hits the real weights (integration)
+docs/              PRODUCT.md (brief) and screenshots
+memo/              TECHNICAL_REPORT.md and training curves
+weights/best.pt    Fine-tuned RT-DETR-L checkpoint
+```
+
+## Data and credits
+
+The detector is RT-DETR-L ([Ultralytics](https://github.com/ultralytics/ultralytics)), fine-tuned on the **SeaClear Marine Debris dataset** (4TU.ResearchData, described in *Scientific Data*). It covers five sites in Croatia and France and three camera types. The sample frames in the screenshots come from that dataset's test split. The repository does not currently include a licence file.

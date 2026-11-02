@@ -17,9 +17,13 @@ services:
       - PYTHONUNBUFFERED=1
       - PORT=8000
       - NVIDIA_VISIBLE_DEVICES=all
+      - AQUAGUARD_API_KEYS=${AQUAGUARD_API_KEYS:-}
+      - AQUAGUARD_RATE_LIMIT=${AQUAGUARD_RATE_LIMIT:-60/minute}
+      - AQUAGUARD_MISSIONS_DIR=/app/missions
     volumes:
       - ./weights:/app/weights:ro
       - ./logs:/app/logs:rw
+      - ./missions:/app/missions:rw
     deploy:
       resources:
         reservations:
@@ -40,6 +44,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.gpu
+      args:
+        INSTALL_UI: "1"   # adds gradio (requirements-space.txt)
     container_name: aquaguard-studio-gpu
     restart: unless-stopped
     ports:

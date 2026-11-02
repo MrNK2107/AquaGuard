@@ -14,7 +14,13 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+pytest.importorskip("ultralytics")
+
 from app.main import app
+
+# These tests run the real fine-tuned checkpoint end to end. Fast, mocked API
+# tests live in test_api_mocked.py; CI runs with `-m "not integration"`.
+pytestmark = pytest.mark.integration
 
 client = TestClient(app)
 

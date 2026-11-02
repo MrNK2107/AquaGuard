@@ -1,15 +1,6 @@
-# 🌊 AquaGuard: API Usage & Deployment Reference Manual
+# AquaGuard API guide
 
 This document provides complete instructions for executing, evaluating, and integrating the **AquaGuard SeaClear RT-DETR Detection and Reasoning API** (FastAPI backend & Gradio interactive frontend).
-
----
-
-## 📑 Official Deliverable PDF Documentation
-
-All required screening deliverables have been compiled into vector-grade publication PDFs:
-1. [**`AquaGuard_Technical_Memo_and_Audit.pdf`**](file:///c:/Users/nanda/Desktop/RAP/memo/AquaGuard_Technical_Memo_and_Audit.pdf): **Strict 2-page Written Memo & Failure Audit** as required by Deliverable 3.
-2. [**`AquaGuard_Complete_System_Documentation.pdf`**](file:///c:/Users/nanda/Desktop/RAP/memo/AquaGuard_Complete_System_Documentation.pdf): Comprehensive 5-page Technical Dossier with architecture diagrams, loss curves, and confusion matrix.
-3. [**`AquaGuard_API_Reference_and_Usage_Guide.pdf`**](file:///c:/Users/nanda/Desktop/RAP/memo/AquaGuard_API_Reference_and_Usage_Guide.pdf): Dedicated API Reference manual & Autonomous ROV integration SDK.
 
 ---
 
@@ -32,6 +23,71 @@ All required screening deliverables have been compiled into vector-grade publica
 - Live Hugging Face ZeroGPU Space: [https://huggingface.co/spaces/MrPhantom07/aquaguard](https://huggingface.co/spaces/MrPhantom07/aquaguard)
 
 ---
+
+## Authentication and rate limits
+
+| Variable | Default | Meaning |
+| :--- | :--- | :--- |
+| `AQUAGUARD_API_KEYS` | *(unset)* | Comma-separated keys. Unset or empty means auth is off; every response then carries `X-AquaGuard-Auth: disabled`. |
+| `AQUAGUARD_RATE_LIMIT` | `60/minute` | Token bucket per key (or per client IP when auth is off). `N/second`, `N/minute`, `N/hour`, or `off`. |
+| `AQUAGUARD_MISSIONS_DIR` | `missions` | Where mission folders are stored. |
+| `AQUAGUARD_MAX_VIDEO_MB` / `AQUAGUARD_MAX_FRAMES` | `500` / `600` | Upload and sampling caps. |
+
+Send the key as `X-API-Key: <key>` or `Authorization: Bearer <key>`. `/`, `/health`, `/docs` and the `/console` page are public. Their data calls are not.
+
+| Status | When | Headers |
+| :--- | :--- | :--- |
+| `401` | Missing or wrong key | `WWW-Authenticate: Bearer realm="aquaguard"` |
+| `429` | Bucket empty | `Retry-After: <seconds>`, `X-RateLimit-Limit`, `X-RateLimit-Remaining` |
+
+Costs per call, in tokens: `/detect` and `/reason` 1, mission creation 10, HTML report 1, PDF 2, corrections zip 2, CSV/JSONL 0.5, review actions and reads 0.1, frame images 0.05.
+
+## Missions (survey reports and review)
+
+```bash
+KEY=deck-1-key
+# 1. Start a mission from one video (sampled every 2 s) or many stills
+curl -s -X POST http://localhost:8000/api/v1/missions -H "X-API-Key: $KEY"   -F files=@dive.mp4 -F name="Harbour wall T3" -F site="Pier 4" -F every_s=2 -F max_frames=120
+# -> 202 {"id": "m-20261103-010203-a1b2c3", "status": "processing", ...}
+
+# 2. Poll until status == "ready"; the inventory is included
+curl -s http://localhost:8000/api/v1/missions/m-20261103-010203-a1b2c3 -H "X-API-Key: $KEY"
+
+# 3. Reports
+curl -s -H "X-API-Key: $KEY" -o report.pdf  http://localhost:8000/api/v1/missions/<id>/report.pdf
+curl -s -H "X-API-Key: $KEY" -o report.html http://localhost:8000/api/v1/missions/<id>/report.html
+curl -s -H "X-API-Key: $KEY" -o boxes.csv   http://localhost:8000/api/v1/missions/<id>/detections.csv
+```
+
+Form fields for `POST /api/v1/missions`: `files` (required: one video `.mp4/.mov/.avi/.mkv/.webm`, or up to 300 images), `name`, `site`, `operator`, `conf` (auto-count threshold, default 0.50), `floor` (drop below, default 0.25, must be ≤ `conf`), `every_s` (video sampling, default 1.0), `max_frames` (default 120).
+
+Inventory fields: `totals` (`counted`, `auto`, `verified`, `pending`, `rejected`, `added`), `classes[]` (`counted`, `verified`, `pending`, `frames_present`, `peak_in_frame`, `mean_conf`), `estimate` (`low`/`high`, a range for video), `timeline[]` (per frame counts), `hotspots[]`, `review` (`reviewed`, `reviewable`, `pct`).
+
+### Review
+
+```bash
+# Most ambiguous first
+curl -s -H "X-API-Key: $KEY" "http://localhost:8000/api/v1/missions/<id>/review/queue?limit=20"
+
+# Decide: confirm | reject | relabel (needs class_name) | undo
+curl -s -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json"   -d '{"detection_id": "00003-01", "action": "relabel", "class_name": "bottle_glass", "reviewer": "deck-1"}'   http://localhost:8000/api/v1/missions/<id>/review
+
+# Accept the rest of a frame, or add a missed box (stored-frame pixels)
+curl -s -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d '{"reviewer":"deck-1"}'   http://localhost:8000/api/v1/missions/<id>/frames/3/confirm
+curl -s -X POST -H "X-API-Key: $KEY" -H "Content-Type: application/json"   -d '{"x1": 40, "y1": 60, "x2": 210, "y2": 220, "class_name": "tire_rubber"}'   http://localhost:8000/api/v1/missions/<id>/frames/3/boxes
+
+# Retraining export: corrections.jsonl + YOLO labels/images for fully reviewed frames + data.yaml
+curl -s -H "X-API-Key: $KEY" -o corrections.zip http://localhost:8000/api/v1/missions/<id>/corrections.zip
+```
+
+Each `corrections.jsonl` line records `box_id`, `bbox_xyxy`, `decision` (`confirmed`/`relabeled`/`rejected`/`added`), `model_class`, `model_confidence`, `final_class`, `reviewer` and `at`.
+
+## Offline CLI
+
+```bash
+python scripts/mission_report.py dive.mp4 --name "Harbour wall T3" --every 2 --pdf   # CPU by default
+python scripts/mission_report.py stills/ --name "Lokrum stills" --out missions
+```
 
 ## 📡 REST API Endpoints Specification
 

@@ -23,8 +23,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Pre-compile wheels for rapid caching
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+# INSTALL_UI=1 also installs gradio (requirements-space.txt) for the studio service.
+ARG INSTALL_UI=0
+COPY requirements.txt requirements-space.txt ./
+RUN if [ "$INSTALL_UI" = "1" ]; then REQ=requirements-space.txt; else REQ=requirements.txt; fi && \n    pip install --no-cache-dir --user -r "$REQ"
 
 # ------------------------------------------------------------------------------
 # STAGE 2: Hardened Production Runtime
@@ -59,7 +61,7 @@ COPY --from=builder --chown=appuser:appgroup /root/.local /home/appuser/.local
 COPY --chown=appuser:appgroup . /app
 
 # Create logs directory with correct permissions
-RUN mkdir -p /app/logs && chown -R appuser:appgroup /app/logs /app/weights
+RUN mkdir -p /app/logs /app/missions && chown -R appuser:appgroup /app/logs /app/weights /app/missions
 
 # Switch to unprivileged non-root user
 USER appuser
@@ -73,4 +75,5 @@ HEALTHCHECK --interval=20s --timeout=5s --start-period=15s --retries=3 \
 
 # PID 1 Tini Entrypoint with Uvicorn Production Workers
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--access-log"]
+# One worker: the mission worker, edit locks and rate limiter live in-process (see README "Deploy").
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--access-log"]

@@ -10,6 +10,9 @@ Enterprise-grade FastAPI implementation with:
 """
 
 import io
+import math
+import threading
+from contextlib import asynccontextmanager
 import time
 import uuid
 import json
@@ -19,13 +22,15 @@ from pathlib import Path
 from typing import Optional
 from PIL import Image
 import torch
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, status
+from fastapi import Depends, FastAPI, UploadFile, File, Form, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from ultralytics import RTDETR
+from fastapi.concurrency import run_in_threadpool
 
-from .reasoning import needs_detector, answer_from_detections, CONF_THRESHOLD
+from .reasoning import needs_detector, answer_from_detections, is_greeting, is_capability_question, CONF_THRESHOLD
+from .mission import detections_from_result
+from .security import AccessControl, fingerprint
 
 # ------------------------------------------------------------------------------
 # 1. Industrial Structured JSON Logging Configuration
@@ -66,10 +71,26 @@ logger.addHandler(fh)
 # ------------------------------------------------------------------------------
 # 2. FastAPI Application Initialization
 # ------------------------------------------------------------------------------
+@asynccontextmanager
+async def lifespan(_app):
+    from .missions_api import recover_interrupted  # imported here: missions_api imports this module
+
+    n = recover_interrupted()
+    if n:
+        logger.info(f"Marked {n} interrupted mission(s) as failed")
+    yield
+
+
 app = FastAPI(
-    title="AquaGuard: SeaClear RT-DETR API",
-    description="Underwater Anthropogenic Marine Debris Perception & Framework-Free Cognitive Engine",
-    version="2.0.0",
+    lifespan=lifespan,
+    title="AquaGuard API",
+    description=(
+        "Debris survey for ROV cleanup crews. `/detect` and `/reason` work on a single frame; "
+        "`/api/v1/missions` turns a dive video or a batch of stills into a reviewed debris inventory "
+        "with HTML/PDF reports and a retraining export. Send `X-API-Key` when the server has "
+        "`AQUAGUARD_API_KEYS` set."
+    ),
+    version="2.1.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -103,17 +124,95 @@ FALLBACK = Path("rtdetr-l.pt")
 NAMES = ['can_metal', 'bottle_plastic', 'bottle_glass', 'net_plastic', 'bag_plastic', 'tire_rubber']
 
 _model = None
+# One RT-DETR instance serves /detect, /reason and mission processing; ultralytics
+# predictors keep per-call state, so every predict (and the first load) goes through this lock.
+infer_lock = threading.RLock()
+
 
 def get_model():
     global _model
-    if _model is None:
+    if _model is not None:
+        return _model
+    with infer_lock:
+        if _model is not None:
+            return _model
         p = str(get_model_path())
         logger.info(f"Initializing RT-DETR-L Neural Engine from: {p}")
+        # Imported lazily so the API module (and its tests) can load without
+        # pulling in ultralytics until a prediction is actually needed.
+        from ultralytics import RTDETR
         _model = RTDETR(p)
         # Warmup forward pass
         _model.predict(source=Image.new("RGB", (512, 512)), verbose=False)
         logger.info("RT-DETR-L Engine Warmup Complete (Ready for inference)")
     return _model
+
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+
+
+def _locked_predict(img, conf):
+    with infer_lock:
+        return get_model().predict(source=img, conf=conf, verbose=False)
+
+
+# ------------------------------------------------------------------------------
+# Access control: API keys + per-client rate limit (see app/security.py)
+# ------------------------------------------------------------------------------
+access = AccessControl.from_env()
+
+
+def require_access(cost: float = 1.0):
+    """Dependency factory: authenticate the caller and charge ``cost`` rate-limit tokens."""
+    def dependency(request: Request, response: Response):
+        ac = access  # module global, so tests and operators can swap it
+        key = ac.extract_key(request.headers)
+        client = request.client.host if request.client else "unknown"
+        if not ac.check_key(key):
+            if ac.limiter is not None:  # failed attempts spend the caller's IP bucket, so key guessing is throttled
+                d = ac.limiter.hit(f"ip:{client}", 1.0)
+                if not d.allowed:
+                    raise HTTPException(status_code=429, detail="Too many failed authentication attempts.",
+                                        headers={"Retry-After": str(max(1, math.ceil(d.retry_after)))})
+            raise HTTPException(
+                status_code=401,
+                detail="Missing or invalid API key. Send it as 'X-API-Key: <key>' or 'Authorization: Bearer <key>'.",
+                headers={"WWW-Authenticate": 'Bearer realm="aquaguard"'},
+            )
+        if not ac.enabled:
+            response.headers["X-AquaGuard-Auth"] = "disabled"
+        ident = f"key:{fingerprint(key)}" if (ac.enabled and key) else f"ip:{client}"
+        request.state.client_id = ident
+        if ac.limiter is not None:
+            d = ac.limiter.hit(ident, cost)
+            headers = {"X-RateLimit-Limit": str(d.limit), "X-RateLimit-Remaining": str(max(d.remaining, 0))}
+            if not d.allowed:
+                headers["Retry-After"] = str(max(1, math.ceil(d.retry_after)))
+                raise HTTPException(status_code=429, detail="Rate limit exceeded. Retry after the number of seconds in Retry-After.", headers=headers)
+            response.headers.update(headers)
+        return ident
+    return dependency
+
+
+async def read_image(file: UploadFile) -> Image.Image:
+    """Validate and decode an uploaded image, raising RFC 7807-friendly HTTP errors."""
+    if file.content_type and not file.content_type.startswith("image"):
+        raise HTTPException(status_code=400, detail="Uploaded file must be a valid image format.")
+    data = await file.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Image size exceeds 15MB limit.")
+    try:
+        return Image.open(io.BytesIO(data)).convert("RGB")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Corrupted image binary could not be decoded.")
+
+
+def extract_detections(results) -> list:
+    """Flatten ultralytics Results into JSON-serialisable dicts, sorted by confidence."""
+    detections = []
+    for r in results:
+        detections.extend(detections_from_result(r, NAMES))
+    return sorted(detections, key=lambda x: x["confidence"], reverse=True)
+
 
 # ------------------------------------------------------------------------------
 # 4. Telemetry Middleware & Correlation ID Tracing
@@ -149,6 +248,7 @@ async def telemetry_middleware(request: Request, call_next):
 async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(
         status_code=exc.status_code,
+        headers=getattr(exc, "headers", None),
         content={
             "type": "https://errors.aquaguard.io/http-error",
             "title": "HTTP Exception",
@@ -161,7 +261,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=422,
         content={
             "type": "https://errors.aquaguard.io/validation-error",
             "title": "Payload Validation Failed",
@@ -188,169 +288,42 @@ async def generic_exception_handler(request: Request, exc: Exception):
 # ------------------------------------------------------------------------------
 # 6. REST API Endpoints
 # ------------------------------------------------------------------------------
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def index():
-    return """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>AquaGuard: SeaClear RT-DETR API & Perception Engine</title>
-        <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
-        <style>
-            :root {
-                --bg: #050b14;
-                --card-bg: rgba(13, 23, 42, 0.85);
-                --cyan: #00f0ff;
-                --emerald: #00ff9d;
-                --text: #f1f5f9;
-                --muted: #94a3b8;
-            }
-            body {
-                background-color: var(--bg);
-                color: var(--text);
-                font-family: 'Outfit', sans-serif;
-                margin: 0;
-                padding: 40px 20px;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-            }
-            .container {
-                max-width: 900px;
-                width: 100%;
-            }
-            .header-box {
-                background: linear-gradient(135deg, rgba(6, 18, 38, 0.9) 0%, rgba(2, 44, 75, 0.9) 100%);
-                border: 1px solid rgba(0, 240, 255, 0.3);
-                border-radius: 12px;
-                padding: 30px;
-                margin-bottom: 24px;
-                box-shadow: 0 10px 30px rgba(0, 240, 255, 0.15);
-            }
-            h1 { font-size: 2.2rem; font-weight: 800; margin: 0 0 8px 0; color: #fff; }
-            h2 { font-size: 1.1rem; color: var(--cyan); margin: 0 0 16px 0; font-weight: 500; }
-            .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-            .badge { background: rgba(0,240,255,0.12); border: 1px solid rgba(0,240,255,0.3); color: #e0f7fa; padding: 4px 10px; border-radius: 6px; font-size: 0.8rem; font-weight: 600; }
-            .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-bottom: 24px; }
-            .card {
-                background: var(--card-bg);
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 10px;
-                padding: 20px;
-                transition: transform 0.2s;
-            }
-            .card:hover { transform: translateY(-3px); border-color: var(--cyan); }
-            .card h3 { color: var(--cyan); margin: 0 0 8px 0; font-size: 1.15rem; }
-            .card p { color: var(--muted); font-size: 0.88rem; line-height: 1.5; margin: 0 0 14px 0; }
-            .btn {
-                display: inline-block;
-                background: linear-gradient(135deg, #0284c7, #00d2ff);
-                color: #050b14;
-                text-decoration: none;
-                font-weight: 700;
-                padding: 8px 16px;
-                border-radius: 6px;
-                font-size: 0.85rem;
-            }
-            .btn:hover { background: linear-gradient(135deg, #00d2ff, #00ff9d); }
-            code { font-family: 'JetBrains Mono', monospace; background: rgba(0,0,0,0.4); padding: 2px 5px; border-radius: 4px; color: #38bdf8; font-size: 0.82rem; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header-box">
-                <h1>🌊 AquaGuard: SeaClear RT-DETR API</h1>
-                <h2>Underwater Anthropogenic Marine Debris Perception & Framework-Free Cognitive Engine</h2>
-                <div class="badges">
-                    <span class="badge">RT-DETR-L Hybrid Attention</span>
-                    <span class="badge">92.32% mAP@50</span>
-                    <span class="badge">15.7 ms GPU Latency</span>
-                    <span class="badge">Industrial Multi-Stage Docker</span>
-                </div>
-            </div>
-
-            <div class="grid">
-                <div class="card">
-                    <h3>🔍 Part A: Object Detection</h3>
-                    <p>Post underwater images to extract 6 non-COCO debris classes, bounding box coordinates, and confidences.</p>
-                    <code>POST /detect</code> or <code>POST /api/v1/detect</code><br><br>
-                    <a href="/docs#/default/detect_detect_post" class="btn">Swagger Docs</a>
-                </div>
-
-                <div class="card">
-                    <h3>🧠 Part B: Cognitive Reasoning</h3>
-                    <p>Execute framework-free natural language spatial reasoning, intent routing, and confidence guardrails.</p>
-                    <code>POST /reason</code> or <code>POST /api/v1/reason</code><br><br>
-                    <a href="/docs#/default/reason_reason_post" class="btn">Swagger Docs</a>
-                </div>
-
-                <div class="card">
-                    <h3>📊 System Telemetry & Health</h3>
-                    <p>Audit loaded model checkpoints, GPU CUDA status, and class definitions.</p>
-                    <code>GET /health</code><br><br>
-                    <a href="/health" class="btn">Health Check</a>
-                </div>
-            </div>
-        </div>
-    </body>
-    </html>
-    """
+    return HTMLResponse((Path(__file__).parent / "web" / "index.html").read_text(encoding="utf-8"))
 
 @app.get("/health")
 @app.get("/api/v1/health")
 def health():
     cuda = torch.cuda.is_available()
+    try:
+        device = torch.cuda.get_device_name(0) if cuda else "CPU"
+    except (AssertionError, RuntimeError):  # e.g. CUDA_VISIBLE_DEVICES="" on a CUDA build
+        cuda, device = False, "CPU"
     return {
         "status": "ok",
         "service": "aquaguard-api",
-        "version": "2.0.0",
+        "version": app.version,
+        "auth": "api-key" if access.enabled else "disabled",
         "model": str(MODEL_PATH if MODEL_PATH.exists() else FALLBACK),
         "cuda": cuda,
-        "device": torch.cuda.get_device_name(0) if cuda else "CPU",
+        "device": device,
         "classes": NAMES
     }
 
 @app.post("/detect")
 @app.post("/api/v1/detect")
-async def detect(file: UploadFile = File(...), conf: float = 0.25):
-    if file.content_type and not file.content_type.startswith("image"):
-        raise HTTPException(status_code=400, detail="Uploaded file must be a valid image format.")
-        
-    data = await file.read()
-    if len(data) > 15 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Image size exceeds 15MB limit.")
-        
-    try:
-        img = Image.open(io.BytesIO(data)).convert("RGB")
-    except Exception:
-        raise HTTPException(status_code=400, detail="Corrupted image binary could not be decoded.")
-        
+async def detect(file: UploadFile = File(...), conf: float = Query(0.25, ge=0.0, le=1.0),
+                 _client: str = Depends(require_access(1.0))):
+    img = await read_image(file)
+
     t0 = time.time()
-    model = get_model()
-    results = model.predict(source=img, conf=conf, verbose=False)
+    results = await run_in_threadpool(_locked_predict, img, conf)
     dt = (time.time() - t0) * 1000
-    
-    detections = []
-    for r in results:
-        if r.boxes is None:
-            continue
-        for box in r.boxes:
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
-            cid = int(box.cls[0].item())
-            cname = NAMES[cid] if 0 <= cid < len(NAMES) else str(cid)
-            detections.append({
-                "x1": round(float(x1), 1),
-                "y1": round(float(y1), 1),
-                "x2": round(float(x2), 1),
-                "y2": round(float(y2), 1),
-                "class_id": cid,
-                "class_name": cname,
-                "confidence": round(float(box.conf[0].item()), 3)
-            })
-            
-    detections = sorted(detections, key=lambda x: x["confidence"], reverse=True)
+
+    detections = extract_detections(results)
+    for d in detections:
+        d["confidence"] = round(d["confidence"], 3)
     return {
         "count": len(detections),
         "inference_ms": round(dt, 1),
@@ -360,7 +333,8 @@ async def detect(file: UploadFile = File(...), conf: float = 0.25):
 
 @app.post("/reason")
 @app.post("/api/v1/reason")
-async def reason(file: UploadFile = File(...), question: str = Form(...), conf: float = 0.35):
+async def reason(file: UploadFile = File(...), question: str = Form(...), conf: float = Query(CONF_THRESHOLD, ge=0.0, le=1.0),
+                 _client: str = Depends(require_access(1.0))):
     if not question or not question.strip():
         raise HTTPException(status_code=400, detail="Form field 'question' is required.")
         
@@ -368,9 +342,9 @@ async def reason(file: UploadFile = File(...), question: str = Form(...), conf: 
     
     # 1. Intent Routing Check (Bypass Detector for Non-Visual Queries)
     if not needs_detector(q):
-        if "hello" in q.lower() or "hi" in q.lower():
+        if is_greeting(q):
             answer = "Hello! I am AquaGuard, an autonomous marine debris perception & reasoning assistant. Upload an underwater seabed image and ask about detected litter, counts, spatial coordinates, or debris classifications."
-        elif "what can you do" in q.lower() or "who are you" in q.lower():
+        elif is_capability_question(q):
             answer = "I identify 6 fine-grained non-COCO seabed debris classes (can_metal, bottle_plastic, bottle_glass, net_plastic, bag_plastic, tire_rubber) and perform spatial reasoning over bounding boxes and class distributions."
         else:
             answer = "This question does not require visual perception. The vision detection pipeline was automatically bypassed to conserve GPU compute."
@@ -385,34 +359,10 @@ async def reason(file: UploadFile = File(...), question: str = Form(...), conf: 
         }
         
     # 2. Vision Detection Pass
-    data = await file.read()
-    try:
-        img = Image.open(io.BytesIO(data)).convert("RGB")
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid image file.")
-        
-    model = get_model()
-    results = model.predict(source=img, conf=0.20, verbose=False)
-    detections = []
-    for r in results:
-        if r.boxes is None:
-            continue
-        for box in r.boxes:
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
-            cid = int(box.cls[0].item())
-            cname = NAMES[cid] if 0 <= cid < len(NAMES) else str(cid)
-            detections.append({
-                "x1": round(float(x1), 1),
-                "y1": round(float(y1), 1),
-                "x2": round(float(x2), 1),
-                "y2": round(float(y2), 1),
-                "class_id": cid,
-                "class_name": cname,
-                "confidence": float(box.conf[0].item())
-            })
-            
-    detections = sorted(detections, key=lambda x: x["confidence"], reverse=True)
-    
+    img = await read_image(file)
+    results = await run_in_threadpool(_locked_predict, img, 0.20)
+    detections = extract_detections(results)
+
     # 3. Grounded Structured Reasoning & Guardrail Evaluation
     answer, insufficient = answer_from_detections(q, detections, conf_thresh=conf)
     
@@ -424,3 +374,12 @@ async def reason(file: UploadFile = File(...), question: str = Form(...), conf: 
         "reason": "structured reasoning over detections" if not insufficient else "confidence guardrail: insufficient to answer",
         "detections": detections[:10]
     }
+
+
+# ------------------------------------------------------------------------------
+# 7. Missions: survey reports + human review (app/missions_api.py)
+# ------------------------------------------------------------------------------
+from .missions_api import console_router, router as missions_router  # noqa: E402
+
+app.include_router(missions_router)
+app.include_router(console_router)

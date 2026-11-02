@@ -93,3 +93,7 @@ memo/*.pdf
 memo/*_p*.png
 *.tmp
 *.bak
+
+# Personal notes (not for the repo)
+INTERVIEW_GUIDE/
+missions/

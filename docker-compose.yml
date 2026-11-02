@@ -24,9 +24,14 @@ services:
       - PORT=8000
       - APP_ENV=production
       - LOG_LEVEL=INFO
+      # Comma-separated API keys; leave empty only for local development (auth off).
+      - AQUAGUARD_API_KEYS=${AQUAGUARD_API_KEYS:-}
+      - AQUAGUARD_RATE_LIMIT=${AQUAGUARD_RATE_LIMIT:-60/minute}
+      - AQUAGUARD_MISSIONS_DIR=/app/missions
     volumes:
       - ./weights:/app/weights:ro
       - ./logs:/app/logs:rw
+      - ./missions:/app/missions:rw
     deploy:
       resources:
         limits:
@@ -52,6 +57,8 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runtime
+      args:
+        INSTALL_UI: "1"   # adds gradio (requirements-space.txt)
     container_name: aquaguard-studio
     restart: unless-stopped
     ports:

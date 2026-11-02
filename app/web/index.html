@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AquaGuard · Debris survey for ROV cleanup crews</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root { --ink:#0B1D2A; --deep:#0E3A4F; --paper:#F6F4EF; --card:#FFFFFF; --line:#D9D4C7; --muted:#5B6B75; --signal:#FF5F1F; --focus:#0072B2; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--paper); color:var(--ink); font:16px/1.55 "IBM Plex Sans","Segoe UI",system-ui,sans-serif; }
+a { color:var(--deep); }
+:focus-visible { outline:3px solid var(--focus); outline-offset:2px; }
+.wrap { max-width:1080px; margin:0 auto; padding:0 16px; }
+.hero { background:var(--deep); color:#fff; padding:28px 0 56px; }
+.bar { display:flex; align-items:center; gap:10px; margin-bottom:48px; flex-wrap:wrap; }
+.bar b { font-size:18px; }
+.bar nav { margin-left:auto; display:flex; gap:4px; flex-wrap:wrap; }
+.bar nav a { color:#dbe7ec; text-decoration:none; padding:6px 10px; border-radius:6px; font-size:14px; }
+.bar nav a:hover { background:rgba(255,255,255,.1); color:#fff; }
+.kicker { font:600 12px/1 "IBM Plex Mono",monospace; letter-spacing:.14em; text-transform:uppercase; color:#ffd2bf; }
+h1 { font-size:clamp(30px,5vw,48px); line-height:1.08; margin:14px 0 16px; max-width:780px; letter-spacing:-.01em; }
+.lede { font-size:18px; color:#d6e3e8; max-width:680px; margin:0 0 28px; }
+.cta { display:flex; gap:10px; flex-wrap:wrap; }
+.btn { display:inline-flex; align-items:center; padding:11px 18px; border-radius:8px; font-weight:600; text-decoration:none; border:1px solid rgba(255,255,255,.35); color:#fff; min-height:44px; }
+.btn.primary { background:var(--signal); border-color:var(--signal); color:var(--ink); }
+.btn:hover { filter:brightness(1.06); }
+section { padding:44px 0 8px; }
+h2 { font-size:13px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin:0 0 14px; font-weight:600; }
+.steps { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px; }
+.step { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:18px; }
+.step .n { font:600 12px "IBM Plex Mono",monospace; color:var(--signal); }
+.step h3 { margin:6px 0 6px; font-size:18px; }
+.step p { margin:0; color:var(--muted); font-size:15px; }
+.facts { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:14px; }
+.fact { border-top:2px solid var(--ink); padding-top:10px; }
+.fact .v { font-size:28px; font-weight:700; font-variant-numeric:tabular-nums; }
+.fact .k { font-size:14px; color:var(--muted); }
+.classes { display:flex; flex-wrap:wrap; gap:8px 18px; font-size:15px; }
+.sw { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:7px; vertical-align:-1px; }
+pre { background:var(--ink); color:#e8eef0; padding:16px; border-radius:10px; overflow-x:auto; font:13.5px/1.55 "IBM Plex Mono",monospace; }
+.cols { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+@media (max-width:760px) { .cols { grid-template-columns:1fr; } }
+footer { margin:48px 0 32px; padding-top:14px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+</style>
+</head>
+<body>
+<header class="hero"><div class="wrap">
+  <div class="bar">
+    <svg width="28" height="28" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="none" stroke="#FF5F1F" stroke-width="3"/><path d="M5 18c3.5 0 3.5-3 7-3s3.5 3 7 3 3.5-3 7-3" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/><circle cx="16" cy="16" r="3" fill="#FF5F1F"/></svg>
+    <b>AquaGuard</b>
+    <nav><a href="/console">Console</a><a href="/docs">API reference</a><a href="/health">Health</a></nav>
+  </div>
+  <div class="kicker">Debris survey for ROV cleanup crews</div>
+  <h1>Turn dive footage into a debris inventory you can stand behind.</h1>
+  <p class="lede">Upload an ROV video or a batch of stills. AquaGuard counts tyres, nets, bottles, cans and bags frame by frame, sends the uncertain boxes to a person for a quick yes or no, and hands you a report for the funder and a corrections file for the next model.</p>
+  <div class="cta"><a class="btn primary" href="/console#/new">Start a survey</a><a class="btn" href="/console">Open console</a><a class="btn" href="/docs">API docs</a></div>
+</div></header>
+
+<main class="wrap">
+  <section>
+    <h2>How a mission works</h2>
+    <div class="steps">
+      <div class="step"><div class="n">01 · Upload</div><h3>One dive, one mission</h3><p>A video is sampled every N seconds; stills are taken as they are. Frames are kept at 1280 px so reviewers see what the model saw.</p></div>
+      <div class="step"><div class="n">02 · Review</div><h3>People settle the doubtful boxes</h3><p>Boxes below the auto-count threshold are not counted until someone confirms them. Keyboard review: Y, N, 1–6 to relabel, A to add a missed item.</p></div>
+      <div class="step"><div class="n">03 · Report</div><h3>Inventory, timeline, evidence</h3><p>Counts by class, a per-frame timeline, hotspot frames and the counting rules, as HTML or PDF. Plus a YOLO-format corrections bundle for retraining.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What the numbers are</h2>
+    <div class="facts">
+      <div class="fact"><div class="v">92.32%</div><div class="k">mAP@50 on the SeaClear hold-out split (858 images). The split is per image, so new sites will score lower.</div></div>
+      <div class="fact"><div class="v">~0.35 s</div><div class="k">per frame on a 4-thread CPU, measured. 15.7 ms per image on GPU.</div></div>
+      <div class="fact"><div class="v">6</div><div class="k">debris classes. Anything else is not counted, and the report says so.</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Classes</h2>
+    <div class="classes">
+      <span><span class="sw" style="background:#0072B2"></span>Tyre</span>
+      <span><span class="sw" style="background:#CC79A7"></span>Net / rope</span>
+      <span><span class="sw" style="background:#56B4E9"></span>Plastic bottle</span>
+      <span><span class="sw" style="background:#009E73"></span>Glass bottle</span>
+      <span><span class="sw" style="background:#E69F00"></span>Metal can</span>
+      <span><span class="sw" style="background:#D55E00"></span>Plastic bag</span>
+    </div>
+  </section>
+
+  <section class="cols">
+    <div>
+      <h2>Start a mission from a script</h2>
+<pre>curl -X POST http://localhost:8000/api/v1/missions \
+  -H "X-API-Key: $AQUAGUARD_KEY" \
+  -F files=@dive.mp4 -F name="Harbour wall T3" \
+  -F every_s=2
+
+curl -H "X-API-Key: $AQUAGUARD_KEY" \
+  http://localhost:8000/api/v1/missions/&lt;id&gt;/report.pdf -o report.pdf</pre>
+    </div>
+    <div>
+      <h2>Ask about a single frame</h2>
+<pre>curl -X POST http://localhost:8000/api/v1/reason \
+  -H "X-API-Key: $AQUAGUARD_KEY" \
+  -F file=@frame.jpg \
+  -F question="How many tyres are there?"
+
+# Refuses when the boxes can't support an answer:
+# depth, weight, brand, or low confidence.</pre>
+    </div>
+  </section>
+  <footer>AquaGuard · RT-DETR-L fine-tuned on the SeaClear Marine Debris dataset · <a href="/docs">OpenAPI</a></footer>
+</main>
+</body>
+</html>

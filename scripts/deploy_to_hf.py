@@ -57,6 +57,12 @@ def deploy(space_name: str, hf_token: str = None):
         ("app_ui.py", "app_ui.py"),                  # UI module
         ("app/reasoning.py", "reasoning.py"),        # Framework-free reasoning engine
         ("app/reasoning.py", "app/reasoning.py"),    # Package path fallback
+        # Survey-report tab (app_ui.py imports these from the app package)
+        ("app/__init__.py", "app/__init__.py"),
+        ("app/brand.py", "app/brand.py"),
+        ("app/mission.py", "app/mission.py"),
+        ("app/report.py", "app/report.py"),
+        ("app/store.py", "app/store.py"),
         ("requirements.txt", "requirements.txt"),    # Dependencies
         ("weights/best.pt", "weights/best.pt"),      # Fine-tuned RT-DETR-L checkpoint
         ("data/yolo/images/test/110.jpg", "data/yolo/images/test/110.jpg"),

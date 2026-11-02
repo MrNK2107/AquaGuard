@@ -33,14 +33,17 @@ RUN groupadd -g 10001 appgroup && \
 WORKDIR /app
 
 # Install dependencies with PyTorch CUDA 12.1 support
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
+# INSTALL_UI=1 also installs gradio (requirements-space.txt) for the studio service.
+ARG INSTALL_UI=0
+COPY requirements.txt requirements-space.txt ./
+RUN if [ "$INSTALL_UI" = "1" ]; then REQ=requirements-space.txt; else REQ=requirements.txt; fi && \
+    pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu121 && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r "$REQ"
 
 # Copy application assets
 COPY --chown=appuser:appgroup . /app
-RUN mkdir -p /app/logs && chown -R appuser:appgroup /app/logs
+RUN mkdir -p /app/logs /app/missions && chown -R appuser:appgroup /app/logs /app/missions
 
 USER appuser
 

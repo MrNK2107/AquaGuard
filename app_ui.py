@@ -20,7 +20,14 @@ app_dir = str(Path(__file__).parent / "app")
 if app_dir not in sys.path:
     sys.path.insert(0, app_dir)
 
-from reasoning import needs_detector, answer_from_detections, is_unanswerable_query
+from reasoning import needs_detector, answer_from_detections, is_greeting, is_capability_question
+
+# Survey missions share the API's code (app/mission.py, app/report.py).
+import tempfile
+from app.brand import CLASS_COLORS_HEX, CLASS_LABELS, TAGLINE, hex_to_rgb
+from app.mission import build_inventory, new_mission, run_frames
+from app.report import render_html
+from app.store import MissionStore
 
 try:
     import spaces
@@ -47,14 +54,8 @@ print(f"Loading RT-DETR Model from: {WEIGHTS_PATH}")
 model = RTDETR(WEIGHTS_PATH)
 
 CLASS_NAMES = ['can_metal', 'bottle_plastic', 'bottle_glass', 'net_plastic', 'bag_plastic', 'tire_rubber']
-CLASS_COLORS = {
-    'can_metal': (255, 107, 0),       # Coral Orange
-    'bottle_plastic': (0, 195, 255),  # Cyan Blue
-    'bottle_glass': (46, 204, 113),   # Mint Green
-    'net_plastic': (241, 196, 15),    # Gold Yellow
-    'bag_plastic': (231, 76, 60),     # Red Coral
-    'tire_rubber': (155, 89, 182)     # Purple Violet
-}
+# Okabe-Ito colour-blind-safe class colours, shared with the console and reports (app/brand.py).
+CLASS_COLORS = {name: hex_to_rgb(hexv) for name, hexv in CLASS_COLORS_HEX.items()}
 
 def annotate_image(image: Image.Image, detections: list) -> Image.Image:
     """Draws sleek bounding boxes with readable tags matching the legend."""
@@ -84,15 +85,22 @@ def annotate_image(image: Image.Image, detections: list) -> Image.Image:
     return img_draw
 
 
-@gpu_decorator
-def run_detect(image: Image.Image, conf_threshold: float):
-    if image is None:
-        return None, "", [], {}
+GREETING_REPLY = "Hello! I am AquaGuard, an autonomous underwater marine debris perception & reasoning system. Ask me about detected litter, counts, spatial positions, or classifications."
+CAPABILITY_REPLY = "I detect 6 non-COCO seabed debris classes (can_metal, bottle_plastic, bottle_glass, net_plastic, bag_plastic, tire_rubber) and perform grounded spatial reasoning without external agent frameworks."
+BYPASS_REPLY = "This query does not require visual perception. The vision detection pipeline was bypassed to conserve edge GPU compute."
 
-    t0 = time.time()
-    results = model.predict(source=image, conf=conf_threshold, iou=0.45, verbose=False)
-    latency_ms = (time.time() - t0) * 1000
 
+def direct_answer(question: str) -> str:
+    """Reply for a non-visual question. Uses the word-boundary checks from reasoning.py."""
+    if is_greeting(question):
+        return GREETING_REPLY
+    if is_capability_question(question):
+        return CAPABILITY_REPLY
+    return BYPASS_REPLY
+
+
+def extract_detections(results) -> tuple:
+    """Turn ultralytics results into (detections sorted by confidence, per-class counts)."""
     detections = []
     class_counts = {}
     for r in results:
@@ -115,6 +123,19 @@ def run_detect(image: Image.Image, conf_threshold: float):
             class_counts[cname] = class_counts.get(cname, 0) + 1
 
     detections = sorted(detections, key=lambda x: x["confidence"], reverse=True)
+    return detections, class_counts
+
+
+@gpu_decorator
+def run_detect(image: Image.Image, conf_threshold: float):
+    if image is None:
+        return None, "", [], {}
+
+    t0 = time.time()
+    results = model.predict(source=image, conf=conf_threshold, iou=0.45, verbose=False)
+    latency_ms = (time.time() - t0) * 1000
+
+    detections, class_counts = extract_detections(results)
     annotated = annotate_image(image, detections)
 
     count_str = ", ".join([f"{k}: {v}" for k, v in class_counts.items()]) if class_counts else "None"
@@ -144,13 +165,8 @@ def run_ask(image: Image.Image, question: str, conf_threshold: float):
     
     # 1. Non-visual inquiry bypass check
     if q and not needs_detector(q):
-        if "hello" in q.lower() or "hi" in q.lower():
-            ans = "Hello! I am AquaGuard, an autonomous underwater marine debris perception & reasoning system. Ask me about detected litter, counts, spatial positions, or classifications."
-        elif "what can you do" in q.lower() or "who are you" in q.lower():
-            ans = "I detect 6 non-COCO seabed debris classes (can_metal, bottle_plastic, bottle_glass, net_plastic, bag_plastic, tire_rubber) and perform grounded spatial reasoning without external agent frameworks."
-        else:
-            ans = "This query does not require visual perception. The vision detection pipeline was bypassed to conserve edge GPU compute."
-            
+        ans = direct_answer(q)
+
         status_pills = """
         <div class="pills">
             <span class="pill pill-info">⚡ Bypassed Detector (0 ms, 0 GPU)</span>
@@ -174,28 +190,7 @@ def run_ask(image: Image.Image, question: str, conf_threshold: float):
     results = model.predict(source=image, conf=conf_threshold, iou=0.45, verbose=False)
     latency_ms = (time.time() - t0) * 1000
 
-    detections = []
-    class_counts = {}
-    for r in results:
-        if r.boxes is None:
-            continue
-        for box in r.boxes:
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
-            cid = int(box.cls[0].item())
-            cname = CLASS_NAMES[cid] if 0 <= cid < len(CLASS_NAMES) else str(cid)
-            conf = float(box.conf[0].item())
-            
-            detections.append({
-                "class_name": cname,
-                "confidence": round(conf, 3),
-                "confidence_pct": f"{conf * 100:.1f}%",
-                "x1": round(x1, 1), "y1": round(y1, 1),
-                "x2": round(x2, 1), "y2": round(y2, 1),
-                "box_coords": f"[{round(x1, 1)}, {round(y1, 1)}, {round(x2, 1)}, {round(y2, 1)}]"
-            })
-            class_counts[cname] = class_counts.get(cname, 0) + 1
-
-    detections = sorted(detections, key=lambda x: x["confidence"], reverse=True)
+    detections, class_counts = extract_detections(results)
     annotated = annotate_image(image, detections)
 
     # 3. Grounded Reasoning
@@ -237,6 +232,49 @@ def run_ask(image: Image.Image, question: str, conf_threshold: float):
     return annotated, answer, status_pills, table_data, raw_json
 
 
+SURVEY_MAX_IMAGES = 40  # the Space is a demo; the console/API take up to 300 stills or a video
+
+
+def _survey_tiles(inv: dict) -> str:
+    est = inv["estimate"]
+    items = str(est["low"]) if est["low"] == est["high"] else f"{est['low']}–{est['high']}"
+    t = inv["totals"]
+    cells = [("Estimated items", items, ""), ("Frames", inv["frames"], ""),
+             ("With debris", inv["frames_with_debris"], ""), ("Awaiting review", t["pending"], "warn" if t["pending"] else "")]
+    return '<div class="survey-tiles">' + "".join(f'<div class="{c}"><b>{v}</b><span>{k}</span></div>' for k, v, c in cells) + "</div>"
+
+
+@gpu_decorator
+def run_survey(files, name: str, conf_threshold: float):
+    """Batch of stills -> debris inventory + downloadable HTML survey report (same code as the API)."""
+    if not files:
+        return "<p>Upload a few seabed images to build a survey report.</p>", [], None
+    paths = [getattr(f, "name", f) for f in files][:SURVEY_MAX_IMAGES]
+    work = Path(tempfile.mkdtemp(prefix="aquaguard-survey-"))
+    store = MissionStore(work)
+    mission = new_mission(name or "Demo survey", "stills", conf=max(conf_threshold, 0.25), floor=0.25,
+                          model=Path(WEIGHTS_PATH).name)
+    mission["source"]["files"] = [Path(p).name for p in paths]
+
+    def frames():
+        for p in paths:
+            try:
+                with Image.open(p) as im:
+                    yield Path(p).name, None, im.convert("RGB")
+            except OSError:
+                continue
+
+    run_frames(mission, model, frames(), save_frame=lambda i, img: store.save_frame(mission["id"], i, img))
+    inv = build_inventory(mission)
+    html = render_html(mission, lambda fr: store.open_frame(mission["id"], fr["image"]))
+    out = work / f"{mission['id']}-report.html"
+    out.write_text(html, encoding="utf-8")
+    rows = [[c["label"], c["counted"], c["pending"], c["frames_present"],
+             "-" if c["mean_conf"] is None else f"{c['mean_conf']:.2f}"]
+            for c in inv["classes"] if c["counted"] or c["pending"]]
+    return _survey_tiles(inv), rows, str(out)
+
+
 def toggle_qa_visibility(enabled: bool):
     """Dynamically shows or hides the Question & Answer controls."""
     return gr.update(visible=enabled), gr.update(visible=enabled)
@@ -267,7 +305,7 @@ CUSTOM_CSS = """
     --border-dark: #1f293d;
     --text-main: #f3f4f6;
     --text-muted: #9ca3af;
-    --accent-orange: #ff6b00;
+    --accent-orange: #FF5F1F;
     --accent-cyan: #00c3ff;
 }
 
@@ -342,12 +380,20 @@ label span, .label-wrap span {
     border-radius: 3px;
     margin-right: 6px;
 }
-.sw-can { background: #ff6b00; }
-.sw-bplastic { background: #00c3ff; }
-.sw-bglass { background: #2ecc71; }
-.sw-net { background: #f1c40f; }
-.sw-bag { background: #e74c3c; }
-.sw-tire { background: #9b59b6; }
+.sw-can { background: #E69F00; }
+.sw-bplastic { background: #56B4E9; }
+.sw-bglass { background: #009E73; }
+.sw-net { background: #CC79A7; }
+.sw-bag { background: #D55E00; }
+.sw-tire { background: #0072B2; }
+.kicker { font: 600 11px/1 "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; color: #FFB08F; margin-bottom: 8px; }
+.survey-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin: 6px 0; }
+.survey-tiles div { background: #0E3A4F; border-radius: 8px; padding: 10px 12px; color: #fff; }
+.survey-tiles b { display: block; font-size: 1.5rem; line-height: 1.1; color: #ffffff; }
+button[role=tab] { color: #c9d6dc !important; }
+button[role=tab][aria-selected=true] { color: #FF8A5C !important; }
+.survey-tiles span { color: #c9d6dc; font-size: .82rem; }
+.survey-tiles .warn b { color: #FF8A5C; }
 
 /* Status Pills */
 .pills {
@@ -398,8 +444,8 @@ label span, .label-wrap span {
 
 /* Primary and Secondary buttons */
 button.primary-btn {
-    background: #ff6b00 !important;
-    color: #ffffff !important;
+    background: #FF5F1F !important;
+    color: #0B1D2A !important;
     font-weight: 700 !important;
     border: none !important;
     border-radius: 8px !important;
@@ -449,6 +495,30 @@ theme = gr.themes.Soft(
     input_background_fill_dark="#0c1322",
     input_border_color="#1e293b",
     input_border_color_dark="#1e293b",
+    # The studio is dark in both modes, so light-mode text must be light too
+    # (otherwise browsers that prefer a light scheme get dark text on dark panels).
+    body_text_color="#e5e7eb",
+    body_text_color_dark="#e5e7eb",
+    body_text_color_subdued="#9ca3af",
+    body_text_color_subdued_dark="#9ca3af",
+    block_label_text_color="#e5e7eb",
+    block_label_text_color_dark="#e5e7eb",
+    block_title_text_color="#e5e7eb",
+    block_title_text_color_dark="#e5e7eb",
+    input_placeholder_color="#6b7280",
+    input_placeholder_color_dark="#6b7280",
+    table_even_background_fill="#101725",
+    table_even_background_fill_dark="#101725",
+    table_odd_background_fill="#0c1322",
+    table_odd_background_fill_dark="#0c1322",
+    block_label_background_fill="#16263d",
+    block_label_background_fill_dark="#16263d",
+    background_fill_primary="#101725",
+    background_fill_primary_dark="#101725",
+    background_fill_secondary="#0c1322",
+    background_fill_secondary_dark="#0c1322",
+    border_color_primary="#1e293b",
+    border_color_primary_dark="#1e293b",
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -463,6 +533,7 @@ with gr.Blocks(
     gr.HTML(
         """
         <div class="hero">
+            <div class="kicker">AquaGuard · """ + TAGLINE + """</div>
             <h1>Underwater Debris Perception & Reasoning</h1>
             <p>
                 RT-DETR fine-tuned for <b>can_metal</b>, <b>bottle_plastic</b>, <b>bottle_glass</b>, <b>net_plastic</b>, <b>bag_plastic</b>, and <b>tire_rubber</b> on seabed imagery, with a hand-written reasoning layer that answers questions from the detections and <b>refuses when they cannot support an answer</b>.
@@ -473,7 +544,8 @@ with gr.Blocks(
         """
     )
 
-    with gr.Row(equal_height=False):
+    with gr.Tab("Single frame"):
+      with gr.Row(equal_height=False):
         # ───────────────── LEFT COLUMN: INPUTS ─────────────────
         with gr.Column(scale=5, min_width=340):
             input_image = gr.Image(
@@ -587,6 +659,27 @@ with gr.Blocks(
                 output_json = gr.JSON(
                     label="",
                 )
+
+    with gr.Tab("Survey report"):
+        gr.Markdown(
+            "Upload a batch of seabed stills from one dive. AquaGuard counts debris by class, holds back "
+            "low-confidence boxes for human review, and writes the same HTML survey report the API produces. "
+            f"Up to {SURVEY_MAX_IMAGES} images here; the self-hosted console also takes a dive video and has the review queue."
+        )
+        with gr.Row(equal_height=False):
+            with gr.Column(scale=5, min_width=320):
+                survey_files = gr.File(label="Seabed images", file_count="multiple", file_types=["image"])
+                survey_name = gr.Textbox(label="Mission name", value="Demo survey")
+                survey_conf = gr.Slider(minimum=0.25, maximum=0.9, value=0.5, step=0.05, label="Auto-count above",
+                                        info="boxes between 0.25 and this wait for review and are not counted")
+                survey_btn = gr.Button("Build survey report", variant="primary", size="lg", elem_classes=["primary-btn"])
+            with gr.Column(scale=6, min_width=320):
+                survey_tiles = gr.HTML()
+                survey_table = gr.Dataframe(headers=["Class", "Counted", "Awaiting review", "Frames seen", "Mean conf."],
+                                            interactive=False)
+                survey_report = gr.File(label="Survey report (HTML, prints to PDF)")
+        survey_btn.click(fn=run_survey, inputs=[survey_files, survey_name, survey_conf],
+                         outputs=[survey_tiles, survey_table, survey_report], show_progress="full")
 
     gr.HTML(
         """

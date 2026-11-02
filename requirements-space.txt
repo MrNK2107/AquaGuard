@@ -1,0 +1,6 @@
+# Core deps + the Gradio demo UI (app.py / app_ui.py).
+# gradio is pinned to the HF Space sdk_version in scripts/deploy_to_hf.py.
+# The Space itself gets gradio from that sdk_version; this file is for local runs
+# and the docker compose `aquaguard-studio` service.
+-r requirements.txt
+gradio==6.15.1

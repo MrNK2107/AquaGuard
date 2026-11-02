@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AquaGuard Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root { --ink:#0B1D2A; --deep:#0E3A4F; --paper:#F6F4EF; --card:#FFFFFF; --line:#D9D4C7; --muted:#5B6B75;
+  --signal:#FF5F1F; --signal-ink:#8A2C00; --signal-bg:#FFF0E9; --ok:#1E7D57; --ok-bg:#E4F3EC; --focus:#0072B2; }
+* { box-sizing:border-box; }
+html, body { margin:0; background:var(--paper); color:var(--ink); font:15px/1.5 "IBM Plex Sans","Segoe UI",system-ui,sans-serif; }
+a { color:var(--deep); }
+code, .mono { font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.92em; }
+.top { background:var(--deep); color:#fff; }
+.top .in { max-width:1200px; margin:0 auto; padding:12px 16px; display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+.brand { display:flex; align-items:center; gap:10px; color:#fff; text-decoration:none; font-weight:700; font-size:18px; }
+.brand small { font:600 11px/1 "IBM Plex Mono",monospace; letter-spacing:.12em; text-transform:uppercase; color:#ffd2bf; }
+.top nav { display:flex; gap:4px; margin-left:auto; align-items:center; flex-wrap:wrap; }
+.top nav a { color:#dbe7ec; text-decoration:none; padding:6px 10px; border-radius:6px; font-size:14px; }
+.top nav a:hover { background:rgba(255,255,255,.1); color:#fff; }
+.keybox { display:flex; gap:6px; align-items:center; }
+.keybox input { width:170px; padding:6px 8px; border-radius:6px; border:1px solid #4c7385; background:#0b2f40; color:#fff; font:13px "IBM Plex Mono",monospace; }
+main { max-width:1200px; margin:0 auto; padding:24px 16px 64px; }
+h1 { font-size:26px; margin:0 0 4px; line-height:1.2; }
+h2 { font-size:13px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin:28px 0 10px; font-weight:600; }
+.sub { color:var(--muted); margin:0 0 18px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:18px; }
+.grid2 { display:grid; grid-template-columns: minmax(0,1.25fr) minmax(0,1fr); gap:18px; align-items:start; }
+@media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+label { display:block; font-size:13px; font-weight:600; margin:0 0 4px; }
+.field { margin-bottom:12px; }
+.row { display:flex; gap:12px; flex-wrap:wrap; }
+.row .field { flex:1 1 140px; }
+input[type=text], input[type=number], select { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:7px; background:#fff; font:inherit; color:var(--ink); }
+input[type=file] { width:100%; padding:14px; border:1.5px dashed #b9b2a1; border-radius:8px; background:#fbfaf7; }
+.hint { font-size:12.5px; color:var(--muted); margin-top:3px; }
+button, .btn { display:inline-flex; align-items:center; gap:6px; padding:9px 14px; border-radius:7px; border:1px solid var(--line); background:#fff; color:var(--ink); font:600 14px "IBM Plex Sans",system-ui,sans-serif; cursor:pointer; text-decoration:none; min-height:38px; }
+button:hover, .btn:hover { border-color:var(--ink); }
+button.primary, .btn.primary { background:var(--signal); color:var(--ink); border-color:var(--signal); }
+button.primary:hover { background:#ff7a45; }
+button.ok { background:var(--ok); color:#fff; border-color:var(--ok); }
+button.danger { color:#9b1c1c; }
+button:disabled { opacity:.5; cursor:not-allowed; }
+:focus-visible { outline:3px solid var(--focus); outline-offset:2px; }
+kbd { font:600 11px "IBM Plex Mono",monospace; border:1px solid var(--line); border-bottom-width:2px; border-radius:4px; padding:1px 5px; background:#fbfaf7; color:var(--muted); margin-left:4px; }
+table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+th, td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); }
+th { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+td.num, th.num { text-align:right; }
+tr.link { cursor:pointer; } tr.link:hover td { background:#fbfaf7; }
+.pill { display:inline-block; font:600 11.5px/1 "IBM Plex Mono",monospace; padding:4px 7px; border-radius:4px; background:#eef1f2; color:var(--muted); }
+.pill.ready { background:var(--ok-bg); color:#145238; }
+.pill.processing { background:#e6f0f7; color:#0b4f7a; }
+.pill.failed { background:#fde8e8; color:#9b1c1c; }
+.pill.pending { background:var(--signal-bg); color:var(--signal-ink); }
+.tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+.tile { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 14px; }
+.tile .v { font-size:28px; font-weight:700; line-height:1.1; font-variant-numeric:tabular-nums; }
+.tile .k { color:var(--muted); font-size:13px; }
+.tile.warn .v { color:var(--signal); }
+.actions { display:flex; gap:8px; flex-wrap:wrap; margin:16px 0; }
+.progress { height:8px; background:#e9e5da; border-radius:99px; overflow:hidden; }
+.progress > div { height:100%; background:var(--ok); width:0; transition:width .3s; }
+iframe.report { width:100%; height:900px; border:1px solid var(--line); border-radius:10px; background:#fff; }
+.empty { text-align:center; padding:36px 16px; color:var(--muted); }
+.toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--ink); color:#fff; padding:10px 16px; border-radius:8px; font-size:14px; opacity:0; transition:opacity .2s; pointer-events:none; z-index:20; max-width:calc(100% - 32px); }
+.toast.on { opacity:1; }
+/* review */
+.stage { position:relative; background:#0b1d2a; border-radius:10px; overflow:hidden; line-height:0; user-select:none; }
+.stage img { width:100%; height:auto; display:block; }
+.stage svg { position:absolute; inset:0; width:100%; height:100%; }
+.stage.draw { cursor:crosshair; }
+.box { fill:none; stroke-width:2; vector-effect:non-scaling-stroke; }
+.box.dim { opacity:.45; }
+.box.focus { stroke-width:4; }
+.box.rejected { stroke-dasharray:6 4; opacity:.5; }
+.qitem .cls { font-size:22px; font-weight:700; display:flex; align-items:center; gap:10px; }
+.sw { display:inline-block; width:14px; height:14px; border-radius:4px; }
+.meta-list { display:grid; grid-template-columns:auto 1fr; gap:4px 14px; font-size:14px; margin:12px 0; }
+.meta-list dt { color:var(--muted); }
+.meta-list dd { margin:0; font-variant-numeric:tabular-nums; }
+.btngrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.relabel { display:grid; grid-template-columns:repeat(2,1fr); gap:6px; margin-top:8px; }
+.relabel button { justify-content:flex-start; font-weight:500; }
+.conf-bar { position:relative; height:10px; background:#eee9dd; border-radius:99px; margin:6px 0 2px; }
+.conf-bar .fill { position:absolute; left:0; top:0; bottom:0; border-radius:99px; background:var(--deep); }
+.conf-bar .thr { position:absolute; top:-4px; bottom:-4px; width:2px; background:var(--signal); }
+.legend { display:flex; flex-wrap:wrap; gap:6px 14px; font-size:13px; margin-top:10px; }
+[hidden] { display:none !important; }
+main:focus { outline:none; }
+.summary { display:flex; flex-wrap:wrap; gap:6px 18px; align-items:center; font-size:15px; margin:4px 0 0; }
+.summary b { font-variant-numeric:tabular-nums; }
+.sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<header class="top"><div class="in">
+  <a class="brand" href="#/"><svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="14" fill="none" stroke="#FF5F1F" stroke-width="3"/><path d="M5 18c3.5 0 3.5-3 7-3s3.5 3 7 3 3.5-3 7-3" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/><circle cx="16" cy="16" r="3" fill="#FF5F1F"/></svg>
+    <span>AquaGuard <small>Console</small></span></a>
+  <nav>
+    <a href="#/">Missions</a>
+    <a href="#/new">New survey</a>
+    <a href="/docs">API</a>
+    <span class="keybox" id="keybox" hidden><label class="sr" for="apikey">API key</label><input id="apikey" type="password" placeholder="API key" autocomplete="off"></span>
+  </nav>
+</div></header>
+<main id="view" tabindex="-1"></main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+const COLORS = { can_metal:"#E69F00", bottle_plastic:"#56B4E9", bottle_glass:"#009E73", net_plastic:"#CC79A7", bag_plastic:"#D55E00", tire_rubber:"#0072B2" };
+let META = { classes:Object.keys(COLORS), labels:{}, auth_required:false };
+const $ = (s, el=document) => el.querySelector(s);
+const view = $("#view");
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const label = c => META.labels[c] || c;
+let pollTimer = null, keyHandler = null;
+
+function getKey() { try { return sessionStorage.getItem("aq-key") || ""; } catch (e) { return ""; } }
+function setKey(v) { try { sessionStorage.setItem("aq-key", v); } catch (e) {} }
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("on"), 2600); }
+
+async function api(path, opts={}) {
+  const headers = Object.assign({}, opts.headers || {});
+  const k = getKey(); if (k) headers["X-API-Key"] = k;
+  const r = await fetch(path, Object.assign({}, opts, { headers }));
+  if (!r.ok) {
+    let detail = r.statusText;
+    try { const j = await r.json(); detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail); } catch (e) {}
+    if (r.status === 401) { $("#keybox").hidden = false; $("#apikey").focus(); }
+    if (r.status === 429) detail = `Rate limited, retry in ${r.headers.get("Retry-After") || "a few"} s`;
+    throw new Error(detail);
+  }
+  return r;
+}
+const json = async (p, o) => (await api(p, o)).json();
+const post = (p, body) => json(p, { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(body || {}) });
+
+async function download(path, filename) {
+  try {
+    const blob = await (await api(path)).blob();
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  } catch (e) { toast(e.message); }
+}
+async function imgURL(path) { return URL.createObjectURL(await (await api(path)).blob()); }
+const fmtT = t => t == null ? "" : `${Math.floor(t/60)}:${String(Math.round(t%60)).padStart(2,"0")}`;
+const when = iso => iso ? iso.replace("T", " ").slice(0, 16) + " UTC" : "";
+const items = e => e.low === e.high ? `${e.low}` : `${e.low}–${e.high}`;
+
+// ---------------------------------------------------------------- missions list
+async function renderList() {
+  view.innerHTML = `<h1>Survey missions</h1><p class="sub">Each mission is one dive video or a batch of stills, turned into a debris inventory you can review and report.</p>
+    <div class="actions"><a class="btn primary" href="#/new">New survey</a></div><div class="card" id="list"><div class="empty">Loading…</div></div>`;
+  try {
+    const { missions } = await json("/api/v1/missions");
+    if (!missions.length) { $("#list").innerHTML = `<div class="empty"><b>No missions yet.</b><br>Upload a dive video or a folder of stills to get your first inventory.<br><br><a class="btn primary" href="#/new">Start a survey</a></div>`; return; }
+    $("#list").innerHTML = `<table><thead><tr><th>Mission</th><th>Site</th><th>Status</th><th class="num">Frames</th><th class="num">Counted</th><th class="num">Awaiting review</th><th class="num">Reviewed</th></tr></thead><tbody>${
+      missions.map(m => `<tr class="link" data-id="${esc(m.id)}" tabindex="0"><td><b>${esc(m.name)}</b><br><span class="mono" style="color:var(--muted)">${esc(m.id)}</span></td><td>${esc(m.site)}</td>
+        <td><span class="pill ${esc(m.status)}">${esc(m.status)}</span></td><td class="num">${m.frames}</td><td class="num">${m.counted ?? "–"}</td>
+        <td class="num">${m.pending ? `<span class="pill pending">${m.pending}</span>` : (m.pending ?? "–")}</td><td class="num">${m.review_pct == null ? "–" : Math.round(m.review_pct) + "%"}</td></tr>`).join("")}</tbody></table>`;
+    view.querySelectorAll("tr.link").forEach(tr => { const go = () => location.hash = `#/m/${tr.dataset.id}`; tr.onclick = go; tr.onkeydown = e => { if (e.key === "Enter") go(); }; });
+  } catch (e) { $("#list").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+
+// ---------------------------------------------------------------- new mission
+function renderNew() {
+  view.innerHTML = `<h1>New survey</h1><p class="sub">Upload one dive video (sampled every few seconds) or a batch of still images.</p>
+  <form class="card" id="nf" style="max-width:760px">
+    <div class="field"><label for="files">Footage</label><input id="files" name="files" type="file" multiple required accept="image/*,video/*,.mp4,.mov,.avi,.mkv,.webm">
+      <div class="hint">One video up to 500 MB, or up to 300 images. Frames are stored downscaled to 1280 px for review.</div></div>
+    <div class="row"><div class="field"><label for="name">Mission name</label><input id="name" name="name" type="text" placeholder="Harbour wall, transect 3" required></div>
+      <div class="field"><label for="site">Site</label><input id="site" name="site" type="text" placeholder="Pier 4 north"></div>
+      <div class="field"><label for="operator">Operator</label><input id="operator" name="operator" type="text" placeholder="ROV pilot / team"></div></div>
+    <div class="row"><div class="field"><label for="conf">Auto-count above</label><input id="conf" name="conf" type="number" min="0.05" max="1" step="0.05" value="0.50"><div class="hint">Lower-confidence boxes wait for review.</div></div>
+      <div class="field"><label for="floor">Ignore below</label><input id="floor" name="floor" type="number" min="0" max="1" step="0.05" value="0.25"></div>
+      <div class="field"><label for="every_s">Video: sample every (s)</label><input id="every_s" name="every_s" type="number" min="0.2" max="60" step="0.1" value="1"></div>
+      <div class="field"><label for="max_frames">Video: max frames</label><input id="max_frames" name="max_frames" type="number" min="1" max="600" value="120"></div></div>
+    <div class="actions"><button class="primary" type="submit" id="go">Start survey</button><a class="btn" href="#/">Cancel</a></div>
+  </form>`;
+  $("#nf").onsubmit = async ev => {
+    ev.preventDefault(); const btn = $("#go"); btn.disabled = true; btn.textContent = "Uploading…";
+    try { const m = await json("/api/v1/missions", { method:"POST", body:new FormData(ev.target) }); location.hash = `#/m/${m.id}`; }
+    catch (e) { toast(e.message); btn.disabled = false; btn.textContent = "Start survey"; }
+  };
+}
+
+// ---------------------------------------------------------------- mission overview
+async function renderMission(id) {
+  view.innerHTML = `<div class="empty">Loading mission…</div>`;
+  let m;
+  try { m = await json(`/api/v1/missions/${id}`); } catch (e) { view.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const head = `<p class="mono" style="color:var(--muted);margin:0">${esc(m.id)}</p><h1>${esc(m.name)}</h1>
+    <p class="sub">${[m.site, m.operator, when(m.created_at)].filter(Boolean).map(esc).join(" · ")} · <span class="pill ${esc(m.status)}">${esc(m.status)}</span></p>`;
+  if (m.status === "processing") {
+    const done = m.progress.done, total = m.progress.total;
+    view.innerHTML = head + `<div class="card"><p><b>Detecting debris…</b> ${done} frame(s) processed${total ? ` of ${total}` : ""}.</p>
+      <div class="progress"><div style="width:${total ? Math.round(100*done/total) : 30}%"></div></div><p class="hint">This page refreshes itself.</p></div>`;
+    pollTimer = setTimeout(() => renderMission(id), 1500); return;
+  }
+  if (m.status === "failed") { view.innerHTML = head + `<div class="card"><b>Processing failed.</b><p>${esc(m.error)}</p></div>`; return; }
+  const inv = m.inventory, t = inv.totals;
+  view.innerHTML = head + `
+    <div class="card"><div class="summary">
+      <span><b>${items(inv.estimate)}</b> estimated items</span><span><b>${inv.frames}</b> frames</span>
+      <span><b>${inv.frames_with_debris}</b> with debris</span>
+      <span>${t.pending ? `<span class="pill pending">${t.pending} awaiting review</span>` : `<span class="pill ready">nothing awaiting review</span>`}</span>
+      <span><b>${inv.review.reviewed}</b> of ${inv.review.reviewable} boxes human-reviewed</span></div>
+      <div class="progress" style="margin-top:10px" aria-hidden="true"><div style="width:${inv.review.pct}%"></div></div></div>
+    <div class="actions">
+      <a class="btn primary" href="#/m/${esc(id)}/review">Review detections</a>
+      <button id="b-pdf">Download PDF</button><button id="b-html">Download HTML report</button>
+      <button id="b-csv">Detections CSV</button><button id="b-zip">Corrections for retraining (.zip)</button>
+      <button id="b-clear" title="Frames where the model found nothing become negative training examples once a person agrees">Mark empty frames as checked</button>
+      <button class="danger" id="b-del">Delete</button>
+    </div>
+    <iframe class="report" id="rep" title="Survey report preview" sandbox=""></iframe>`;
+  $("#b-pdf").onclick = () => download(`/api/v1/missions/${id}/report.pdf`, `${id}-report.pdf`);
+  $("#b-html").onclick = () => download(`/api/v1/missions/${id}/report.html`, `${id}-report.html`);
+  $("#b-csv").onclick = () => download(`/api/v1/missions/${id}/detections.csv`, `${id}-detections.csv`);
+  $("#b-zip").onclick = () => download(`/api/v1/missions/${id}/corrections.zip`, `${id}-corrections.zip`);
+  $("#b-clear").onclick = async () => {
+    try {
+      const full = await json(`/api/v1/missions/${id}?frames=true`);
+      const empty = full.frames.filter(f => !f.detections.length);
+      if (!empty.length) { toast("No empty frames in this mission"); return; }
+      if (!confirm(`Mark the ${empty.length} frame(s) where the model found nothing as checked (no debris)? Only do this if you have checked them in the footage.`)) return;
+      for (const f of empty) await post(`/api/v1/missions/${id}/frames/${f.index}/confirm`, {});
+      toast(`${empty.length} empty frame(s) marked as checked`);
+    } catch (e) { toast(e.message); }
+  };
+  $("#b-del").onclick = async () => { if (!confirm("Delete this mission and its frames?")) return;
+    try { await api(`/api/v1/missions/${id}`, { method:"DELETE" }); location.hash = "#/"; } catch (e) { toast(e.message); } };
+  try { $("#rep").srcdoc = await (await api(`/api/v1/missions/${id}/report.html`)).text(); } catch (e) { toast(e.message); }
+}
+
+// ---------------------------------------------------------------- review workspace
+async function renderReview(id) {
+  const st = { id, queue:[], pos:0, frame:null, img:null, drawMode:false, drag:null, history:[] };
+  view.innerHTML = `<p class="mono" style="margin:0"><a href="#/m/${esc(id)}">← Back to mission</a></p><h1>Review queue</h1>
+    <p class="sub">Most ambiguous detections first. Your decisions override the model and become training data.</p>
+    <div class="progress" aria-hidden="true"><div id="rprog"></div></div><p class="hint" id="rtext"></p>
+    <div class="grid2" style="margin-top:14px">
+      <div><div class="stage" id="stage"><img id="fimg" alt=""><svg id="ov" preserveAspectRatio="none"></svg></div>
+        <div class="legend" id="legend"></div></div>
+      <div class="card qitem" id="panel"><div class="empty">Loading…</div></div>
+    </div>`;
+  $("#legend").innerHTML = META.classes.map(c => `<span><span class="sw" style="background:${COLORS[c]}"></span> ${esc(label(c))}</span>`).join("")
+    + `<span><span class="sw" style="border:2px dashed #777"></span> rejected</span>`;
+
+  async function loadQueue() {
+    const q = await json(`/api/v1/missions/${id}/review/queue?limit=500`);
+    st.queue = q.items; st.pos = 0; st.threshold = q.threshold;
+    $("#rprog").style.width = `${q.review.pct}%`;
+    $("#rtext").textContent = `${q.review.reviewed} of ${q.review.reviewable} model boxes reviewed · ${q.remaining} left in queue · threshold ${q.threshold.toFixed(2)}`;
+  }
+  async function showFrame(index) {
+    if (!st.frame || st.frame.index !== index) {
+      if (st.img) URL.revokeObjectURL(st.img);
+      st.img = await imgURL(`/api/v1/missions/${id}/frames/${index}.jpg`);
+      $("#fimg").src = st.img;
+    }
+    st.frame = await json(`/api/v1/missions/${id}/frames/${index}`);
+    drawBoxes();
+  }
+  function drawBoxes() {
+    const f = st.frame, cur = st.queue[st.pos], ov = $("#ov");
+    if (!f) return;
+    ov.setAttribute("viewBox", `0 0 ${f.width} ${f.height}`);
+    ov.innerHTML = f.detections.map(d => {
+      const focus = cur && d.id === cur.id;
+      const cls = ["box", d.status === "rejected" ? "rejected" : "", focus ? "focus" : (cur ? "dim" : "")].join(" ");
+      return `<rect class="${cls}" x="${d.x1}" y="${d.y1}" width="${d.x2-d.x1}" height="${d.y2-d.y1}" stroke="${focus ? "#FF5F1F" : (COLORS[d.class_name] || "#fff")}"><title>${esc(label(d.class_name))} ${d.confidence == null ? "(added)" : Math.round(d.confidence*100) + "%"} · ${d.status}</title></rect>`;
+    }).join("") + (st.drag ? `<rect class="box focus" x="${Math.min(st.drag.x1,st.drag.x2)}" y="${Math.min(st.drag.y1,st.drag.y2)}" width="${Math.abs(st.drag.x2-st.drag.x1)}" height="${Math.abs(st.drag.y2-st.drag.y1)}" stroke="#FF5F1F" stroke-dasharray="8 4"/>` : "");
+  }
+  function panel() {
+    const cur = st.queue[st.pos];
+    if (!cur) {
+      $("#panel").innerHTML = `<div class="empty"><b>Queue is empty.</b><br>Every model box has a decision. Download the corrections zip from the mission page to retrain.<br><br><a class="btn primary" href="#/m/${esc(id)}">Back to mission</a></div>`;
+      return;
+    }
+    const pct = Math.round(cur.confidence * 100);
+    $("#panel").innerHTML = `
+      <p class="hint" style="margin:0">Item ${st.pos+1} of ${st.queue.length} · frame ${cur.frame_index}${cur.t != null ? " @ " + fmtT(cur.t) : " · " + esc(cur.source)}</p>
+      <div class="cls"><span class="sw" style="background:${COLORS[cur.class_name]}"></span>${esc(label(cur.class_name))}</div>
+      <span class="pill ${cur.status === "pending" ? "pending" : ""}">${cur.status === "pending" ? "not counted until confirmed" : "auto-counted"}</span>
+      <dl class="meta-list"><dt>Model confidence</dt><dd>${pct}%<div class="conf-bar" aria-hidden="true"><div class="fill" style="width:${pct}%"></div><div class="thr" style="left:${Math.round(st.threshold*100)}%"></div></div></dd>
+        <dt>Box</dt><dd class="mono">${[cur.x1,cur.y1,cur.x2,cur.y2].map(Math.round).join(", ")}</dd></dl>
+      <div class="btngrid"><button class="ok" data-a="confirm">Confirm<kbd>Y</kbd></button><button data-a="reject">Not debris<kbd>N</kbd></button>
+        <button data-a="skip">Skip<kbd>S</kbd></button><button data-a="undo" ${st.history.length ? "" : "disabled"}>Undo<kbd>U</kbd></button></div>
+      <p style="margin:14px 0 0;font-weight:600;font-size:13px">Wrong class? Relabel as</p>
+      <div class="relabel">${META.classes.map((c,i) => `<button data-r="${c}" ${c === cur.class_name ? "disabled" : ""}><span class="sw" style="background:${COLORS[c]}"></span>${esc(label(c))}<kbd>${i+1}</kbd></button>`).join("")}</div>
+      <div class="actions" style="margin-bottom:0"><button data-a="frame">Confirm rest of frame<kbd>F</kbd></button><button data-a="draw" class="${st.drawMode ? "primary" : ""}">${st.drawMode ? "Drag on the image…" : "Add missed debris"}<kbd>A</kbd></button></div>`;
+    $("#panel").querySelectorAll("[data-a]").forEach(b => b.onclick = () => act(b.dataset.a));
+    $("#panel").querySelectorAll("[data-r]").forEach(b => b.onclick = () => decide("relabel", b.dataset.r));
+  }
+  async function refresh() { panel(); const cur = st.queue[st.pos]; if (cur) await showFrame(cur.frame_index); else if (st.frame) { st.frame = await json(`/api/v1/missions/${id}/frames/${st.frame.index}`); drawBoxes(); } }
+  async function decide(action, cls) {
+    const cur = st.queue[st.pos]; if (!cur) return;
+    try {
+      await post(`/api/v1/missions/${id}/review`, { detection_id:cur.id, action, class_name:cls, reviewer:reviewer() });
+      st.history.push(cur); st.queue.splice(st.pos, 1);
+      if (st.pos >= st.queue.length) st.pos = 0;
+      toast(action === "relabel" ? `Relabeled as ${label(cls)}` : action === "confirm" ? "Confirmed" : "Marked as not debris");
+      await updateProgress(); await refresh();
+    } catch (e) { toast(e.message); }
+  }
+  async function updateProgress() {
+    const q = await json(`/api/v1/missions/${id}/review/queue?limit=1`);
+    $("#rprog").style.width = `${q.review.pct}%`;
+    $("#rtext").textContent = `${q.review.reviewed} of ${q.review.reviewable} model boxes reviewed · ${q.remaining} left in queue · threshold ${q.threshold.toFixed(2)}`;
+  }
+  async function act(a) {
+    const cur = st.queue[st.pos];
+    if (a === "confirm" || a === "reject") return decide(a);
+    if (a === "skip") { if (st.queue.length) { st.pos = (st.pos + 1) % st.queue.length; await refresh(); } return; }
+    if (a === "undo") {
+      const last = st.history.pop(); if (!last) return;
+      try { await post(`/api/v1/missions/${id}/review`, { detection_id:last.id, action:"undo" }); st.queue.splice(st.pos, 0, last); toast("Undone"); await updateProgress(); await refresh(); } catch (e) { toast(e.message); }
+      return;
+    }
+    if (a === "frame" && cur) {
+      try { const r = await post(`/api/v1/missions/${id}/frames/${cur.frame_index}/confirm`, { reviewer:reviewer() });
+        toast(`Confirmed ${r.confirmed} box(es) in frame ${cur.frame_index}`); await loadQueue(); await refresh(); } catch (e) { toast(e.message); }
+      return;
+    }
+    if (a === "draw") { st.drawMode = !st.drawMode; $("#stage").classList.toggle("draw", st.drawMode); panel(); }
+  }
+  function reviewer() { try { return localStorage.getItem("aq-reviewer") || ""; } catch (e) { return ""; } }
+  function pt(ev) { const r = $("#ov").getBoundingClientRect(); return { x:(ev.clientX - r.left) / r.width * st.frame.width, y:(ev.clientY - r.top) / r.height * st.frame.height }; }
+  const stage = $("#stage");
+  stage.onpointerdown = ev => { if (!st.drawMode || !st.frame) return; const p = pt(ev); st.drag = { x1:p.x, y1:p.y, x2:p.x, y2:p.y }; stage.setPointerCapture(ev.pointerId); };
+  stage.onpointermove = ev => { if (!st.drag) return; const p = pt(ev); st.drag.x2 = p.x; st.drag.y2 = p.y; drawBoxes(); };
+  stage.onpointerup = async () => {
+    if (!st.drag) return; const d = st.drag; st.drag = null;
+    const choices = META.classes.map((c,i) => `${i+1} = ${label(c)}`).join("\n");
+    const pick = prompt(`Class for the new box?\n${choices}`, "1");
+    const cls = META.classes[parseInt(pick, 10) - 1];
+    if (!cls) { drawBoxes(); return; }
+    try { await post(`/api/v1/missions/${id}/frames/${st.frame.index}/boxes`, { x1:d.x1, y1:d.y1, x2:d.x2, y2:d.y2, class_name:cls, reviewer:reviewer() });
+      toast(`Added ${label(cls)}`); st.drawMode = false; stage.classList.remove("draw"); await refresh(); } catch (e) { toast(e.message); drawBoxes(); }
+  };
+  keyHandler = ev => {
+    if (ev.target.closest("input,select,textarea") || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    const k = ev.key.toLowerCase();
+    const map = { y:"confirm", n:"reject", s:"skip", u:"undo", f:"frame", a:"draw" };
+    if (map[k]) { ev.preventDefault(); act(map[k]); return; }
+    const i = parseInt(k, 10);
+    if (i >= 1 && i <= META.classes.length) { const c = META.classes[i-1]; if (st.queue[st.pos] && c !== st.queue[st.pos].class_name) decide("relabel", c); }
+  };
+  document.addEventListener("keydown", keyHandler);
+  try { await loadQueue(); await refresh(); } catch (e) { $("#panel").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+}
+
+// ---------------------------------------------------------------- router
+async function route() {
+  clearTimeout(pollTimer);
+  if (keyHandler) { document.removeEventListener("keydown", keyHandler); keyHandler = null; }
+  const h = location.hash.replace(/^#/, "") || "/";
+  let mm;
+  if (h === "/new") renderNew();
+  else if ((mm = h.match(/^\/m\/([\w-]+)\/review$/))) await renderReview(mm[1]);
+  else if ((mm = h.match(/^\/m\/([\w-]+)$/))) await renderMission(mm[1]);
+  else await renderList();
+  view.focus({ preventScroll:true });
+}
+(async () => {
+  try { META = await (await fetch("/console/meta")).json(); } catch (e) {}
+  const kb = $("#keybox"), ki = $("#apikey");
+  if (META.auth_required) kb.hidden = false;
+  ki.value = getKey();
+  ki.onchange = () => { setKey(ki.value.trim()); toast("Key saved for this tab"); route(); };
+  window.addEventListener("hashchange", route);
+  route();
+})();
+</script>
+</body>
+</html>
